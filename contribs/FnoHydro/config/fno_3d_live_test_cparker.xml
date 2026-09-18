@@ -1,0 +1,136 @@
+<?xml version="1.0" ?>
+<jetscape>
+
+  <!--
+    Smoke test for the live FnoHydro 3D+1 pipeline using a model trained
+    from FNO4d/train_torch (traced via export_torchscript.py), grid taken
+    from train_torch/checkpoints/config.yaml:
+      nx=64 ny=64 neta=16 ntau=31  x_min=-10.0 y_min=-10.0 eta_min=-1.5
+      dx=dy=0.3125 deta=0.1875 dtau=0.1 tau0~0.44
+    n_features=4 (eps, vx, vy, veta) -- tau-normalization convention on the
+    eps channel is NOT yet confirmed against FnoHydro.cc's expectations;
+    this run is only checking that the pipeline executes end-to-end.
+  -->
+
+  <enableAutomaticTaskListDetermination
+    > false </enableAutomaticTaskListDetermination>
+
+  <nEvents> 2 </nEvents>
+
+  <Random>
+    <seed>1</seed>
+  </Random>
+
+  <vlevel> 0 </vlevel>
+
+  <setReuseHydro> false </setReuseHydro>
+  <nReuseHydro> 0 </nReuseHydro>
+
+  <outputFilename>test_fno3d_cparker.dat</outputFilename>
+  <JetScapeWriterAscii> on </JetScapeWriterAscii>
+
+  <write_pthat> 1 </write_pthat>
+
+  <!-- Hard Process (required by fnoHydroTest.cc's hardcoded PGun) -->
+  <Hard>
+    <PGun>
+        <name>PGun</name>
+        <pT>20</pT>
+        <parID>21</parID>
+    </PGun>
+  </Hard>
+
+  <!-- Inital State Module: full 3D (x,y,eta) grid, matches FNO training grid -->
+  <IS>
+      <grid_max_x> 10 </grid_max_x>
+      <grid_max_y> 10 </grid_max_y>
+      <grid_max_z> 1.5 </grid_max_z>
+      <grid_step_x> 0.3125 </grid_step_x>
+      <grid_step_y> 0.3125 </grid_step_y>
+      <grid_step_z> 0.1875 </grid_step_z>
+
+      <Trento>
+        <PhysicsInputs
+                projectile='Au'
+                target='Au'
+                sqrts='200'
+                cross-section='4.2'
+                normalization='5.73'
+            >
+        </PhysicsInputs>
+        <CutInputs centrality-low='0' centrality-high='10'>
+        </CutInputs>
+        <TransInputs
+                reduced-thickness='0.063'
+                fluctuation="1.05"
+                nucleon-width="1.12"
+                nucleon-min-dist="1.4"
+            >
+        </TransInputs>
+        <LongiInputs
+                mean-coeff="1.0"
+                std-coeff="3.0"
+                skew-coeff="0.0"
+                skew-type="1"
+                jacobian="0.8"
+            >
+        </LongiInputs>
+      </Trento>
+  </IS>
+
+  <!--Preequilibrium Dynamics Module -->
+  <Preequilibrium>
+      <tau0>0.44</tau0>
+      <NullPreDynamics> </NullPreDynamics>
+  </Preequilibrium>
+
+  <!-- Hydro Module: live 3D+1 FnoHydro using the traced FNO4d model -->
+  <Hydro>
+      <FNO>
+        <model_file
+            >../external_packages/js-contrib/contribs/FnoHydro/models/traced_fno.pt</model_file>
+
+        <centrality-low>0</centrality-low>
+        <centrality-high>10</centrality-high>
+        <EOS_id_MUSIC>91</EOS_id_MUSIC>
+
+        <!-- 4 = (energy_density, vx, vy, vz); trained with normalization:
+             none (see FNO4d/train_torch/checkpoints/config.yaml), so the
+             energy_density channel is raw epsilon, not epsilon*tau. -->
+        <n_features>4</n_features>
+        <edensity_times_tau>0</edensity_times_tau>
+        <freezeout_temperature>0.136</freezeout_temperature>
+
+        <nx>64</nx>
+        <ny>64</ny>
+        <neta>16</neta>
+        <ntau>31</ntau>
+
+        <x_min>-10.0</x_min>
+        <y_min>-10.0</y_min>
+        <eta_min>-1.5</eta_min>
+
+        <dtau>0.1</dtau>
+        <deta>0.1875</deta>
+      </FNO>
+  </Hydro>
+
+  <!--Eloss Modules -->
+    <Eloss>
+        <maxT>100</maxT>
+      <Matter>
+        <Q0> 2.0 </Q0>
+        <in_vac> 0 </in_vac>
+        <vir_factor> 0.25 </vir_factor>
+        <recoil_on> 1 </recoil_on>
+        <broadening_on> 0 </broadening_on>
+        <hydro_Tc> 0.16 </hydro_Tc>
+      </Matter>
+    </Eloss>
+
+    <!-- Jet Hadronization Module -->
+    <JetHadronization>
+      <name>colorless</name>
+    </JetHadronization>
+
+</jetscape>

@@ -55,6 +55,15 @@ private:
 
   int n_features;
 
+  // Whether the model's energy-density channel is epsilon*tau (needs dividing
+  // by tau on read-back) or raw epsilon (no division). The n_features==3 (2D+1)
+  // / n_features==4 (3D+1) branches historically assumed epsilon*tau always;
+  // that only holds for models trained with an etau75-style normalization.
+  // Defaults to true to preserve behavior for those existing models; set
+  // <Hydro><FNO><edensity_times_tau>0</edensity_times_tau></FNO></Hydro> for
+  // a model trained on raw (un-normalized) epsilon.
+  bool edensity_times_tau_fno;
+
   // neta_fno > 1 selects the full 3D+1 (x,y,eta,tau) pipeline; neta_fno == 1
   // keeps the original boost-invariant 2D+1 (x,y,tau) pipeline byte-for-byte,
   // so existing 2D+1-trained traced models keep working unchanged.

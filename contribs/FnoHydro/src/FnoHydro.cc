@@ -77,6 +77,7 @@ void GetCellIndicesFromGlobalPreqIndex(int global_index, int& id_x, int& id_y)
 FnoHydro::FnoHydro() : device({}) {
   hydro_status = NOT_START;
   freezeout_temperature = 0.0;
+  edensity_times_tau_fno = true;
   //doCooperFrye = 0;
 
   x_min_preq = dx_preq = y_min_preq = dy_preq = 0.0;
@@ -113,7 +114,6 @@ void FnoHydro::InitializeHydro(Parameter parameter_list) {
   torch::set_num_threads(1);
   JSINFO << "Number of threads (libtorch OMP): " << torch::get_num_threads();
   JSINFO << "Default device: " << device; // << std::endl;
-  JSINFO << BOLDCYAN << "IMPORTANT: edensity*Tau normalization hardcoded for now!!!";
 
   //REMARK: Same issue as with tracing, not everything in FNO model gets moved to the proper other device ...
   /*
@@ -185,11 +185,23 @@ void FnoHydro::InitializeHydro(Parameter parameter_list) {
   //cout<<dx_fno<<" "<<dy_fno<<" "<<endl;
   //cout<<ntau_fno<<" "<<dtau_fno<<" "<<endl;
 
-  freezeout_temperature = GetXMLElementDouble({"Hydro", "MUSIC", "freezeout_temperature"});
+  freezeout_temperature = GetXMLElementDouble({"Hydro", "FNO", "freezeout_temperature"});
 
-  int EOS_id_MUSIC = GetXMLElementInt({"Hydro", "FNOROOIN", "EOS_id_MUSIC"});
+  int EOS_id_MUSIC = GetXMLElementInt({"Hydro", "FNO", "EOS_id_MUSIC"});
   JSINFO<<"Use EOS (Music id) = "<<EOS_id_MUSIC;
   fnoEOS=make_unique<EOS>(EOS_id_MUSIC);
+
+  // Optional override: absent means "keep the true default" (existing
+  // epsilon*tau-trained models keep working unchanged).
+  std::string edensity_times_tau_text =
+      GetXMLElementText({"Hydro", "FNO", "edensity_times_tau"}, false);
+  if (!edensity_times_tau_text.empty()) {
+    edensity_times_tau_fno = (std::stoi(edensity_times_tau_text) != 0);
+  }
+  JSINFO << "FNO energy-density channel convention: "
+         << (edensity_times_tau_fno
+                 ? "epsilon*tau (dividing by tau on read-back)"
+                 : "raw epsilon (no tau division)");
 
   /*
   if (freezeout_temperature > 0.05) {
@@ -525,14 +537,14 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               }
               else if (n_features == 3) {
 
-                  //=============================================================
-                  //IMPORTANT: ednsity * Tau normalization hardcoded for now!!!!
-                  //=============================================================
-                  float eNormInverse = accessor[0][i][j][k]/(bulk_info.Tau0()+bulk_info.dtau*k);
-                  float mTemperature = GetTemperatureFromEos(eNormInverse);
+                  float eNorm = accessor[0][i][j][k];
+                  if (edensity_times_tau_fno) {
+                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k);
+                  }
+                  float mTemperature = GetTemperatureFromEos(eNorm);
 
-                  fluid_cell_info_ptr->energy_density = eNormInverse;
-                  fluid_cell_info_ptr->temperature = mTemperature; //GetTemperatureFromEos(eNormInverse);
+                  fluid_cell_info_ptr->energy_density = eNorm;
+                  fluid_cell_info_ptr->temperature = mTemperature;
                   fluid_cell_info_ptr->vx = accessor[1][i][j][k];
                   fluid_cell_info_ptr->vy = accessor[2][i][j][k];
               }
@@ -564,13 +576,13 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               }
               else if (n_features == 4) {
 
-                  //=============================================================
-                  //IMPORTANT: ednsity * Tau normalization hardcoded for now!!!!
-                  //=============================================================
-                  float eNormInverse = accessor[0][i][j][l][k]/(bulk_info.Tau0()+bulk_info.dtau*k);
-                  float mTemperature = GetTemperatureFromEos(eNormInverse);
+                  float eNorm = accessor[0][i][j][l][k];
+                  if (edensity_times_tau_fno) {
+                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k);
+                  }
+                  float mTemperature = GetTemperatureFromEos(eNorm);
 
-                  fluid_cell_info_ptr->energy_density = eNormInverse;
+                  fluid_cell_info_ptr->energy_density = eNorm;
                   fluid_cell_info_ptr->temperature = mTemperature;
                   fluid_cell_info_ptr->vx = accessor[1][i][j][l][k];
                   fluid_cell_info_ptr->vy = accessor[2][i][j][l][k];
