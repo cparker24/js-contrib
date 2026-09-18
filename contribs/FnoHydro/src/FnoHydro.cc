@@ -80,7 +80,9 @@ FnoHydro::FnoHydro() : device({}) {
   //doCooperFrye = 0;
 
   x_min_preq = dx_preq = y_min_preq = dy_preq = 0.0;
+  eta_min_preq = deta_preq = 0.0;
   nx_preq = ny_preq = 0;
+  neta_preq = 1;
 
   x_min_fno = dx_fno = y_min_fno = dy_fno = 0.0;
   nx_fno = ny_fno = 60;
@@ -88,7 +90,7 @@ FnoHydro::FnoHydro() : device({}) {
   n_features = 4;
 
   neta_fno = 1;
-  deta_fno = 0.0;
+  eta_min_fno = deta_fno = 0.0;
 
   //device = torch::Device({});
   //has_source_terms = false;
@@ -166,11 +168,18 @@ void FnoHydro::InitializeHydro(Parameter parameter_list) {
   neta_fno = GetXMLElementInt({"Hydro", "FNO", "neta"});
 
   deta_fno = GetXMLElementDouble({"Hydro", "FNO", "deta"});
+  // Only meaningful for a 3D+1 (neta > 1) model; for a 2D+1/boost-invariant
+  // model bulk_info.eta_min is unused (see SetHydroGridInfo).
+  eta_min_fno = GetXMLElementDouble({"Hydro", "FNO", "eta_min"});
   dtau_fno = GetXMLElementDouble({"Hydro", "FNO", "dtau"});
 
   n_features = GetXMLElementInt({"Hydro", "FNO", "n_features"});
 
   JSINFO<<"# of FNO training features = "<<n_features;
+  if (Is3DPlus1()) {
+    JSINFO << "FnoHydro running in full 3D+1 mode: neta = " << neta_fno
+           << ", eta_min = " << eta_min_fno << ", deta = " << deta_fno;
+  }
 
   //cout<<x_min_fno<<" "<<y_min_fno<<" "<<nx_fno<<" "<<ny_fno<<" "<<endl;
   //cout<<dx_fno<<" "<<dy_fno<<" "<<endl;
@@ -207,11 +216,9 @@ void FnoHydro::EvolveHydro() {
   }
 
   dx_preq = ini->GetXStep();
-  dy_preq = ini->GetZStep();
+  dy_preq = ini->GetYStep();
   x_min_preq = - ini->GetXMax();
   y_min_preq = - ini->GetYMax();
-  double z_max = ini->GetZMax();
-  int nz = ini->GetZSize();
   double tau0 = pre_eq_ptr->GetPreequilibriumEndTime();
 
   JSINFO << "hydro initial time set by PreEq module tau0 = " << tau0 << " fm/c";
@@ -219,12 +226,16 @@ void FnoHydro::EvolveHydro() {
 
   SetPreEqGridInfo();
 
-  //cout<<dx_preq<<" "<<dy_preq<<" "<<z_max<<" "<<nz<<" "<<endl;
+  //cout<<dx_preq<<" "<<dy_preq<<" "<<endl;
   //cout<<x_min_preq<<" "<<y_min_preq<<" "<<endl;
-  //cout<<nx_preq<<" "<<ny_preq<<" "<<endl; //nz_preq<<" "<<endl;
+  //cout<<nx_preq<<" "<<ny_preq<<" "<<neta_preq<<" "<<endl;
+
+  bool is3D = Is3DPlus1();
 
   // last dimension, number of timesteps for predictions fix to only 1 for now !!!!
-  torch::Tensor fno_input_tensor = torch::zeros({n_features, nx_fno, ny_fno, 1});
+  torch::Tensor fno_input_tensor = is3D
+      ? torch::zeros({n_features, nx_fno, ny_fno, neta_fno, 1})
+      : torch::zeros({n_features, nx_fno, ny_fno, 1});
 
   string tensorShapeInput = "Input Tesnor shape from Preq : ";
   c10::IntArrayRef shape = fno_input_tensor.sizes();
@@ -240,41 +251,77 @@ void FnoHydro::EvolveHydro() {
   //kinda takes time maybe some of the torch operations quicker ... think aboutit !!!
   // OMP fore the loops ...
   // try with getting torch tensor and dimension from flat input vector ... !!!!
+  int k=0; // last dimension, number of timesteps for predictions fix to only 1 for now
   for (int i=0;i<nx_fno;i++)
     for (int j=0;j<ny_fno;j++) {
 
         double x_In = x_min_fno + i*dx_fno;
         double y_In = y_min_fno + j*dy_fno;
 
-        int preq_glob_index = GetPreqCellIndex(GetPreqIdX(x_In),GetPreqIdY(y_In));
-        double ed = pre_eq_ptr->e_[preq_glob_index];
+        if (!is3D) {
+          int preq_glob_index = GetPreqCellIndex(GetPreqIdX(x_In),GetPreqIdY(y_In),0);
+          double ed = pre_eq_ptr->e_[preq_glob_index];
 
-        //h2dIS_rebin->Fill(i,j,ed);
+          if (n_features == 4 ) {
 
-        //for (int k=0;k<50;k++) {
-        int k=0;
-        if (n_features == 4 ) {
+              double T = GetTemperatureFromEos(ed);
 
-            double T = GetTemperatureFromEos(ed);
-
-            fno_input_tensor[0][i][j][k] = ed;
-            fno_input_tensor[1][i][j][k] = T;
-            // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
-            fno_input_tensor[2][i][j][k] = 0;
-            fno_input_tensor[3][i][j][k] = 0;
+              fno_input_tensor[0][i][j][k] = ed;
+              fno_input_tensor[1][i][j][k] = T;
+              // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
+              fno_input_tensor[2][i][j][k] = 0;
+              fno_input_tensor[3][i][j][k] = 0;
+          }
+          else if (n_features == 3) {
+              fno_input_tensor[0][i][j][k] = ed;
+              // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
+              fno_input_tensor[1][i][j][k] = 0;
+              fno_input_tensor[2][i][j][k] = 0;
+          }
+          else {JSWARN<<" Not enough FNO features edensity, vx,vy ... to be used further in JETSCAPE !"; exit(-1);}
         }
-        else if (n_features == 3) {
-            fno_input_tensor[0][i][j][k] = ed;
-            // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
-            fno_input_tensor[1][i][j][k] = 0;
-            fno_input_tensor[2][i][j][k] = 0;
-        }
-        else {JSWARN<<" Not enough FNO features edensity, vx,vy ... to be used further in JETSCAPE !"; exit(-1);}
+        else {
+          // 3D+1: same (x,y) rebin as above, plus a loop over the eta bins of
+          // the FNO grid, each mapped onto the pre-equilibrium eta grid.
+          for (int l=0;l<neta_fno;l++) {
 
-        //}
+            double eta_In = eta_min_fno + l*deta_fno;
+
+            int preq_glob_index = GetPreqCellIndex(GetPreqIdX(x_In),GetPreqIdY(y_In),GetPreqIdEta(eta_In));
+            double ed = pre_eq_ptr->e_[preq_glob_index];
+
+            // n_features == 5: (energy_density, temperature, vx, vy, vz);
+            // n_features == 4: (energy_density*tau, vx, vy, vz) -- de-normalized
+            // by tau on read-back, see PassHydroEvolutionHistoryToFramework.
+            if (n_features == 5) {
+
+                double T = GetTemperatureFromEos(ed);
+
+                fno_input_tensor[0][i][j][l][k] = ed;
+                fno_input_tensor[1][i][j][l][k] = T;
+                // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
+                fno_input_tensor[2][i][j][l][k] = 0;
+                fno_input_tensor[3][i][j][l][k] = 0;
+                fno_input_tensor[4][i][j][l][k] = 0;
+            }
+            else if (n_features == 4) {
+                fno_input_tensor[0][i][j][l][k] = ed;
+                // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
+                fno_input_tensor[1][i][j][l][k] = 0;
+                fno_input_tensor[2][i][j][l][k] = 0;
+                fno_input_tensor[3][i][j][l][k] = 0;
+            }
+            else {JSWARN<<" Not enough FNO features edensity, vx,vy,vz ... to be used further in JETSCAPE for a 3D+1 model!"; exit(-1);}
+          }
+        }
     }
 
-  fno_input_tensor = fno_input_tensor.repeat({1, 1, 1, ntau_fno});
+  // The time-evolution axis is the last tensor dimension in both the 2D+1
+  // ([feat,x,y,tau]) and 3D+1 ([feat,x,y,eta,tau]) layouts.
+  int tau_dim = is3D ? 4 : 3;
+  fno_input_tensor = is3D
+      ? fno_input_tensor.repeat({1, 1, 1, 1, ntau_fno})
+      : fno_input_tensor.repeat({1, 1, 1, ntau_fno});
 
   clear_up_evolution_data();
   PassPreEqEvolutionHistoryToFramework();
@@ -292,13 +339,16 @@ void FnoHydro::EvolveHydro() {
     // Execute the model and turn its output into a tensor.
     output = module.forward(inputs).toTensor();
 
-    torch::Tensor first_ntau_steps = fno_input_tensor.slice(3, 0, 1).unsqueeze(0);
+    // The batched tau axis shifts by one (a batch dim is prepended) relative
+    // to tau_dim computed above.
+    int batched_tau_dim = tau_dim + 1;
+    torch::Tensor first_ntau_steps = fno_input_tensor.slice(tau_dim, 0, 1).unsqueeze(0);
 
-    // This creates a tensor with shape [n_features, nx_fno, ny_fno, ntau_fno]
+    // This creates a tensor with shape [n_features, nx_fno, ny_fno, (neta_fno,) ntau_fno]
     //std::cout << "Original tensor shape: " << fno_input_tensor.sizes() << std::endl;
     //std::cout << "Selected first " << ntau_fno << " steps shape: " << first_ntau_steps.sizes() << std::endl;
 
-    output = torch::cat({first_ntau_steps, output}, 4);
+    output = torch::cat({first_ntau_steps, output}, batched_tau_dim);
 
     shape = output.sizes();
     tensorShapeInput = "Output Tesnor shape from FNO : ";
@@ -350,21 +400,23 @@ void FnoHydro::SetPreEqGridInfo() {
   //bulk_info.dtau = pre_eq_ptr->GetPreequilibriumEvodtau();
   dx_preq = ini->GetXStep();
   dy_preq = ini->GetYStep();
-  //dz_preq = ini->GetZStep();
+  deta_preq = ini->GetZStep(); // "Z" is the space-time rapidity (eta) direction
 
   x_min_preq = - ini->GetXMax();
   y_min_preq = - ini->GetYMax();
-  //z_max_preq = ini->GetZMax();
+  eta_min_preq = - ini->GetZMax();
 
   nx_preq = ini->GetXSize();
   ny_preq = ini->GetYSize();
-  //nz_preq = ini->GetZSize();
+  neta_preq = ini->GetZSize();
 
   bulk_info.x_min = x_min_preq;
   bulk_info.y_min = y_min_preq;
 
   JSINFO << "Use preEq evo: tau_0 = " << bulk_info.tau_min
-         << " fm/c, and Xmin = Ymin = "<<bulk_info.x_min<< " fm, for FNO hydro (grid) time evolution prediction ...";
+         << " fm/c, Xmin = Ymin = "<<bulk_info.x_min<< " fm, EtaMin = "
+         << eta_min_preq << ", nEta = " << neta_preq
+         << ", for FNO hydro (grid) time evolution prediction ...";
 }
 
 
@@ -373,20 +425,27 @@ void FnoHydro::SetHydroGridInfo() {
   //REMARK: HArdcoded for new make read in from xml or some other info wrt FNO model (w/ and w/o super-resolution) !!!
   //Or get from output tensor dimensions ... !!!!
 
-  bulk_info.neta = neta_fno; //boost invvariant ...
+  bulk_info.neta = neta_fno;
   bulk_info.nx = nx_fno;
   bulk_info.ny =ny_fno;
   //bulk_info.x_min = -music_hydro_ptr->get_hydro_x_max();
   bulk_info.dx =dx_fno;
   //bulk_info.y_min = -music_hydro_ptr->get_hydro_x_max();
   bulk_info.dy = dy_fno;
-  bulk_info.eta_min = 0;
   bulk_info.deta = deta_fno;
 
   bulk_info.dtau=dtau_fno;
   bulk_info.ntau=ntau_fno;
 
-  bulk_info.boost_invariant = true;
+  if (Is3DPlus1()) {
+    // Full 3D+1 model: real eta dependence, no boost-invariant vz synthesis
+    // in EvolutionHistory::get_tz -- vz comes straight from the FNO output.
+    bulk_info.eta_min = eta_min_fno;
+    bulk_info.boost_invariant = false;
+  } else {
+    bulk_info.eta_min = 0;
+    bulk_info.boost_invariant = true;
+  }
   /*
   if (flag_preEq_output_evo_to_memory == 0) {
     bulk_info.tau_min = music_hydro_ptr->get_hydro_tau0();
@@ -431,69 +490,97 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
   //std::cout<< tensorShapeInput.c_str() << std::endl;
   JSINFO << tensorShapeInput.c_str() <<" with bulkInfo nTau = "<<bulk_info.ntau;
 
-  //Tremendous speed up !!!
-  auto accessor = flattened_tensor.accessor<float, 4>();
+  // Common tail shared by every cell, independent of dimensionality.
+  auto fillTailAndStore = [this](std::unique_ptr<FluidCellInfo> &fluid_cell_info_ptr) {
+    fluid_cell_info_ptr->entropy_density = 0.0; //fluidCell_ptr->sd;
+    fluid_cell_info_ptr->pressure = 0.0; //fluidCell_ptr->pressure;
+    fluid_cell_info_ptr->mu_B = 0.0;
+    fluid_cell_info_ptr->mu_C = 0.0;
+    fluid_cell_info_ptr->mu_S = 0.0;
+    fluid_cell_info_ptr->qgp_fraction = 0.0;
+    for (int a = 0; a < 4; a++) {
+      for (int b = 0; b < 4; b++) {
+        fluid_cell_info_ptr->pi[a][b] = 0.0;
+      }
+    }
+    fluid_cell_info_ptr->bulk_Pi = 0.0;
+    bulk_info.data.push_back(*fluid_cell_info_ptr);
+  };
 
-  for (int k=0;k<bulk_info.ntau;k++)
-    for (int i=0;i<bulk_info.nx;i++)
-        for (int j=0;j<bulk_info.ny;j++)
-        {
-            std::unique_ptr<FluidCellInfo> fluid_cell_info_ptr(new FluidCellInfo);
+  if (!Is3DPlus1()) {
+    //Tremendous speed up !!!
+    auto accessor = flattened_tensor.accessor<float, 4>();
 
-            if (n_features == 4 ) {
-                fluid_cell_info_ptr->energy_density = accessor[0][i][j][k];
-                fluid_cell_info_ptr->temperature = accessor[1][i][j][k];
-                fluid_cell_info_ptr->vx = accessor[2][i][j][k];
-                fluid_cell_info_ptr->vy = accessor[3][i][j][k];
-            }
-            else if (n_features == 3) {
+    for (int k=0;k<bulk_info.ntau;k++)
+      for (int i=0;i<bulk_info.nx;i++)
+          for (int j=0;j<bulk_info.ny;j++)
+          {
+              std::unique_ptr<FluidCellInfo> fluid_cell_info_ptr(new FluidCellInfo);
 
-                //=============================================================
-                //IMPORTANT: ednsity * Tau normalization hardcoded for now!!!!
-                //=============================================================
-                float eNormInverse = accessor[0][i][j][k]/(bulk_info.Tau0()+bulk_info.dtau*k);
-                float mTemperature = GetTemperatureFromEos(eNormInverse);
-
-                fluid_cell_info_ptr->energy_density = eNormInverse;
-                fluid_cell_info_ptr->temperature = mTemperature; //GetTemperatureFromEos(eNormInverse);
-                fluid_cell_info_ptr->vx = accessor[1][i][j][k];
-                fluid_cell_info_ptr->vy = accessor[2][i][j][k];
-
-                // Check if this cut alrerady here made the problem with the overall mult problem with semi central using central FNO ...
-                /*
-                if (mTemperature>freezeout_temperature)
-                {
-                    fluid_cell_info_ptr->energy_density = eNormInverse;
-                    fluid_cell_info_ptr->temperature = mTemperature; //GetTemperatureFromEos(eNormInverse);
-                    fluid_cell_info_ptr->vx = accessor[1][i][j][k];
-                    fluid_cell_info_ptr->vy = accessor[2][i][j][k];
-                }
-                else
-                {
-                    fluid_cell_info_ptr->energy_density = 0;
-                    fluid_cell_info_ptr->temperature = 0; //GetTemperatureFromEos(eNormInverse);
-                    fluid_cell_info_ptr->vx = 0;
-                    fluid_cell_info_ptr->vy = 0;
-                }
-                */
-            }
-            else {JSWARN<<" Not enough FNO features edensity, vx,vy ... to be used further in JETSCAPE !"; exit(-1);}
-
-            fluid_cell_info_ptr->vz = 0.0 ;//fluidCell_ptr->vz;
-            fluid_cell_info_ptr->entropy_density = 0.0; //fluidCell_ptr->sd;
-            fluid_cell_info_ptr->pressure = 0.0; //fluidCell_ptr->pressure;
-            fluid_cell_info_ptr->mu_B = 0.0;
-            fluid_cell_info_ptr->mu_C = 0.0;
-            fluid_cell_info_ptr->mu_S = 0.0;
-            fluid_cell_info_ptr->qgp_fraction = 0.0;
-            for (int i = 0; i < 4; i++) {
-              for (int j = 0; j < 4; j++) {
-                fluid_cell_info_ptr->pi[i][j] = 0.0;
+              if (n_features == 4 ) {
+                  fluid_cell_info_ptr->energy_density = accessor[0][i][j][k];
+                  fluid_cell_info_ptr->temperature = accessor[1][i][j][k];
+                  fluid_cell_info_ptr->vx = accessor[2][i][j][k];
+                  fluid_cell_info_ptr->vy = accessor[3][i][j][k];
               }
+              else if (n_features == 3) {
+
+                  //=============================================================
+                  //IMPORTANT: ednsity * Tau normalization hardcoded for now!!!!
+                  //=============================================================
+                  float eNormInverse = accessor[0][i][j][k]/(bulk_info.Tau0()+bulk_info.dtau*k);
+                  float mTemperature = GetTemperatureFromEos(eNormInverse);
+
+                  fluid_cell_info_ptr->energy_density = eNormInverse;
+                  fluid_cell_info_ptr->temperature = mTemperature; //GetTemperatureFromEos(eNormInverse);
+                  fluid_cell_info_ptr->vx = accessor[1][i][j][k];
+                  fluid_cell_info_ptr->vy = accessor[2][i][j][k];
+              }
+              else {JSWARN<<" Not enough FNO features edensity, vx,vy ... to be used further in JETSCAPE !"; exit(-1);}
+
+              fluid_cell_info_ptr->vz = 0.0; // boost-invariant: get_tz() synthesizes vz from eta
+              fillTailAndStore(fluid_cell_info_ptr);
             }
-            fluid_cell_info_ptr->bulk_Pi = 0.0;
-            bulk_info.data.push_back(*fluid_cell_info_ptr);
-          }
+  }
+  else {
+    // Full 3D+1: rank-5 tensor [feature][x][y][eta][tau]. Loop order
+    // (tau,x,y,eta) matches EvolutionHistory::CellIndex so bulk_info.data
+    // fills up in the exact order the framework expects.
+    auto accessor = flattened_tensor.accessor<float, 5>();
+
+    for (int k=0;k<bulk_info.ntau;k++)
+      for (int i=0;i<bulk_info.nx;i++)
+        for (int j=0;j<bulk_info.ny;j++)
+          for (int l=0;l<bulk_info.neta;l++)
+          {
+              std::unique_ptr<FluidCellInfo> fluid_cell_info_ptr(new FluidCellInfo);
+
+              if (n_features == 5) {
+                  fluid_cell_info_ptr->energy_density = accessor[0][i][j][l][k];
+                  fluid_cell_info_ptr->temperature = accessor[1][i][j][l][k];
+                  fluid_cell_info_ptr->vx = accessor[2][i][j][l][k];
+                  fluid_cell_info_ptr->vy = accessor[3][i][j][l][k];
+                  fluid_cell_info_ptr->vz = accessor[4][i][j][l][k];
+              }
+              else if (n_features == 4) {
+
+                  //=============================================================
+                  //IMPORTANT: ednsity * Tau normalization hardcoded for now!!!!
+                  //=============================================================
+                  float eNormInverse = accessor[0][i][j][l][k]/(bulk_info.Tau0()+bulk_info.dtau*k);
+                  float mTemperature = GetTemperatureFromEos(eNormInverse);
+
+                  fluid_cell_info_ptr->energy_density = eNormInverse;
+                  fluid_cell_info_ptr->temperature = mTemperature;
+                  fluid_cell_info_ptr->vx = accessor[1][i][j][l][k];
+                  fluid_cell_info_ptr->vy = accessor[2][i][j][l][k];
+                  fluid_cell_info_ptr->vz = accessor[3][i][j][l][k];
+              }
+              else {JSWARN<<" Not enough FNO features edensity, vx,vy,vz ... to be used further in JETSCAPE for a 3D+1 model!"; exit(-1);}
+
+              fillTailAndStore(fluid_cell_info_ptr);
+            }
+  }
 
   flattened_tensor.reset();
 }
@@ -602,15 +689,22 @@ void FnoHydro::GetHydroInfo_JETSCAPE(
   fluid_cell_info_ptr = std::unique_ptr<FluidCellInfo>(new FluidCellInfo(temp));
 }
 
-int FnoHydro::GetPreqCellIndex(int id_x, int id_y) const
+int FnoHydro::GetPreqCellIndex(int id_x, int id_y, int id_eta) const
 {
     id_x = std::min(nx_preq - 1, std::max(0, id_x));
     id_y = std::min(ny_preq - 1, std::max(0, id_y));
-    return (id_x * ny_preq + id_y);
+    int neta_clamped = std::max(1, neta_preq);
+    id_eta = std::min(neta_clamped - 1, std::max(0, id_eta));
+    // (x,y,eta) with eta fastest-varying, matching FreestreamMilne's
+    // output_to_vectors layout and EvolutionHistory::CellIndex; reduces to
+    // the original id_x*ny_preq + id_y scheme when neta_preq == 1.
+    return (id_x * ny_preq * neta_clamped + id_y * neta_clamped + id_eta);
 }
 
-void FnoHydro::GetCellIndicesFromGlobalPreqIndex(int global_index, int& id_x, int& id_y) const
+void FnoHydro::GetCellIndicesFromGlobalPreqIndex(int global_index, int& id_x, int& id_y, int& id_eta) const
 {
-    id_x = global_index / ny_preq; //check, not important since mostly symmetric ... !
-    id_y = global_index % ny_preq;
+    int neta_clamped = std::max(1, neta_preq);
+    id_x = global_index / (ny_preq * neta_clamped); //check, not important since mostly symmetric ... !
+    id_y = (global_index / neta_clamped) % ny_preq;
+    id_eta = global_index % neta_clamped;
 }

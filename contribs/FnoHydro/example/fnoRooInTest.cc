@@ -85,7 +85,7 @@ int main(int argc, char** argv)
 
     auto jetscape = make_shared<JetScape>();
     jetscape->SetXMLMainFileName("../config/jetscape_main.xml");
-    jetscape->SetXMLUserFileName("../fno_hydro/config/jetscape_user_root_bulk_test.xml");
+    jetscape->SetXMLUserFileName("../external_packages/js-contrib/contribs/FnoHydro/config/jetscape_user_root_bulk_test.xml");
     //jetscape->SetReuseHydro (false);
     //jetscape->SetNReuseHydro (0);
 
@@ -96,8 +96,8 @@ int main(int argc, char** argv)
     auto pythiaGun= make_shared<PythiaGun> ();
     auto hydro = make_shared<FnoRooIn> ();
 
-    //jetscape->Add(trento);
-    //jetscape->Add(null_predynamics);
+    jetscape->Add(trento);
+    jetscape->Add(null_predynamics);
     jetscape->Add(pGun);
     //jetscape->Add(pythiaGun);
     jetscape->Add(hydro);

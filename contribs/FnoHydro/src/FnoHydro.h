@@ -42,19 +42,23 @@ private:
 
   Jetscape::real x_min_preq, dx_preq;
   Jetscape::real y_min_preq, dy_preq;
-  //Jetscape::real z_min_preq, dz_preq;
-  int nx_preq, ny_preq; // nz_preq;
+  Jetscape::real eta_min_preq, deta_preq;
+  int nx_preq, ny_preq, neta_preq;
 
   Jetscape::real x_min_fno, dx_fno;
   Jetscape::real y_min_fno, dy_fno;
-  Jetscape::real deta_fno;
+  Jetscape::real eta_min_fno, deta_fno;
   Jetscape::real dtau_fno;
-  //Jetscape::real z_min_fno, dz_fno;
-  int nx_fno, ny_fno; // nz_fno
+  int nx_fno, ny_fno;
   int ntau_fno;
   int neta_fno;
 
   int n_features;
+
+  // neta_fno > 1 selects the full 3D+1 (x,y,eta,tau) pipeline; neta_fno == 1
+  // keeps the original boost-invariant 2D+1 (x,y,tau) pipeline byte-for-byte,
+  // so existing 2D+1-trained traced models keep working unchanged.
+  inline bool Is3DPlus1() const { return neta_fno > 1; }
 
   torch::jit::script::Module module;
   torch::Tensor output;
@@ -75,8 +79,17 @@ private:
     return (static_cast<int>((y - y_min_preq) / dy_preq));
   }
 
-  int GetPreqCellIndex(int id_x, int id_y) const;
-  void GetCellIndicesFromGlobalPreqIndex(int global_index, int& id_x, int& id_y) const;
+  // Collapses to 0 for a 2D+1 (boost-invariant) pre-equilibrium grid.
+  inline int GetPreqIdEta(Jetscape::real eta) const {
+    if (neta_preq <= 1 || deta_preq == 0.0) return 0;
+    return (static_cast<int>((eta - eta_min_preq) / deta_preq));
+  }
+
+  // Flattening matches the (x,y,eta) layout used by FreestreamMilne /
+  // JETSCAPE's EvolutionHistory::CellIndex (eta fastest-varying); reduces to
+  // the original id_x*ny_preq + id_y scheme when neta_preq == 1.
+  int GetPreqCellIndex(int id_x, int id_y, int id_eta) const;
+  void GetCellIndicesFromGlobalPreqIndex(int global_index, int& id_x, int& id_y, int& id_eta) const;
 
 public:
 

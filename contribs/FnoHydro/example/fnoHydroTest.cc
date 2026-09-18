@@ -85,7 +85,7 @@ int main(int argc, char** argv)
 
     auto jetscape = make_shared<JetScape>();
     jetscape->SetXMLMainFileName("../config/jetscape_main.xml");
-    jetscape->SetXMLUserFileName("../fno_hydro/config/jetscape_user_root_bulk_test.xml");
+    jetscape->SetXMLUserFileName("../external_packages/js-contrib/contribs/FnoHydro/config/jetscape_user_root_bulk_test.xml");
     //jetscape->SetReuseHydro (false);
     //jetscape->SetNReuseHydro (0);
 

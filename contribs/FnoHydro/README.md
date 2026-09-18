@@ -159,11 +159,12 @@ Example configuration files are in `config/`.
 
 ### FnoHydro — live FNO prediction
 
-Replace `<MUSIC>` with `<FnoHydro>`:
+Configured via a `<FNO>` block under `<Hydro>` (the module itself registers
+with the framework as `"FnoHydro"`):
 
 ```xml
 <Hydro>
-  <FnoHydro>
+  <FNO>
     <model_file>/path/to/models/traced_JS3.7_10k_3feat_fno_model_cpu_0_10_59bins.pt</model_file>
     <n_features>3</n_features>
     <tau0>0.5</tau0>
@@ -176,9 +177,43 @@ Replace `<MUSIC>` with `<FnoHydro>`:
     <y_min>-15.0</y_min>
     <dtau>0.1</dtau>
     <EOS_id_MUSIC>91</EOS_id_MUSIC>
-  </FnoHydro>
+  </FNO>
 </Hydro>
 ```
+
+#### 3D+1 models
+
+`FnoHydro` supports both boost-invariant 2D+1 (x,y,tau) models and full 3D+1
+(x,y,eta,tau) models. Which pipeline runs is selected purely by `<neta>`:
+
+| `<neta>` | Grid | `<n_features>` channels | `bulk_info.boost_invariant` |
+|---|---|---|---|
+| `1` | 2D+1 (x,y,tau) | `3`: (energy_density·τ, vx, vy)  `4`: (energy_density, temperature, vx, vy) | `true` (`vz`/de-boosted `vx,vy` synthesized from η by the framework) |
+| `>1` | 3D+1 (x,y,eta,tau) | `4`: (energy_density·τ, vx, vy, vz)  `5`: (energy_density, temperature, vx, vy, vz) | `false` (`vz` comes straight from the model) |
+
+For a 3D+1 model, also set `<eta_min>` (the 2D+1 defaults ignore it) — for a
+symmetric grid, `eta_min = -0.5 * deta * (neta - 1)`. `<deta>` and `<eta_min>`
+must match the grid the model was trained on, exactly like `<x_min>`/`<dx>`
+(derived as `-2*x_min/nx`) do for the transverse plane.
+
+The 4-/5-feature variants that include `vz` follow the same
+tau-normalization convention as their 2D+1 counterparts: the odd-numbered
+channel count (4) carries `energy_density*tau` and is de-normalized by tau on
+read-back, while the even-numbered count (5) carries a plain `temperature`
+channel instead and needs no de-normalization.
+
+The pre-equilibrium initial state must itself be 3D (i.e. the `<IS>` block's
+`grid_max_z`/`grid_step_z` non-zero, e.g. via `TrentoInitial`'s
+`<LongiInputs>`) for `FnoHydro` to have real eta-dependent input to feed the
+model; see `config/fno_3d_test.xml` for a complete example (it references a
+placeholder `model_file` since no 3D+1 trained models are distributed with
+this repo yet — see [Obtaining Pre-trained Model Files](#obtaining-pre-trained-model-files)).
+
+> **Note:** `FnoRooIn` (ROOT-replay) and the `root_bulk/` writer/ROOT-file
+> format remain 2D+1-only for now — their `TTree` layout
+> (`data[x][y][tau][feature]`) has no eta axis. Extending that pipeline to
+> 3D+1 would additionally require regenerating the training-data ROOT files
+> and is tracked separately from the live `FnoHydro` module covered here.
 
 ### FnoRooIn — replay hydro evolution from a ROOT file
 
@@ -208,8 +243,9 @@ Key parameters:
 |-----------|-------------|
 | `model_file` | Path to the JIT-traced TorchScript `.pt` FNO model |
 | `root_file` | (FnoRooIn only) ROOT file containing pre-generated MUSIC evolution data |
-| `n_features` | Number of hydro features the model was trained on (3: energy density + vx + vy) |
+| `n_features` | Number of hydro features the model was trained on — see [3D+1 models](#3d1-models) for the full 2D+1 vs. 3D+1 channel conventions |
 | `nx`, `ny` | Transverse grid size (must match training grid, typically 60×60) |
+| `neta`, `eta_min`, `deta` | (`FnoHydro`) Longitudinal grid; `neta=1` selects 2D+1/boost-invariant, `neta>1` selects a full 3D+1 model |
 | `ntau` | Number of time steps (typically 59) |
 | `dtau` | Time step size in fm/c (typically 0.1) |
 | `tau0` | Initial proper time in fm/c |

@@ -1,0 +1,128 @@
+<?xml version="1.0" ?>
+<jetscape>
+
+  <!--
+    Example 3D+1 FnoHydro configuration.
+
+    Differences from the 2D+1 (boost-invariant) examples in this directory:
+      - <IS><grid_max_z>/<grid_step_z> are non-zero, so the initial-state
+        module produces a genuine (x,y,eta) grid instead of a single eta slice.
+      - Trento's <LongiInputs> supplies the longitudinal (eta) shape.
+      - <Hydro><FNO><neta> is > 1, with <eta_min>/<deta> describing that grid.
+      - <n_features> follows the 3D+1 convention: 5 = (energy_density,
+        temperature, vx, vy, vz), 4 = (energy_density*tau, vx, vy, vz) with
+        the tau-normalization undone on read-back (see FnoHydro.cc).
+      - model_file must point to an FNO model that was actually trained on a
+        3D+1 (x,y,eta,tau) grid of this shape; this file does not ship one
+        (see models/README.md).
+  -->
+
+  <enableAutomaticTaskListDetermination
+    > false </enableAutomaticTaskListDetermination>
+
+  <nEvents> 1 </nEvents>
+
+  <Random>
+    <seed>1</seed>
+  </Random>
+
+  <vlevel> 0 </vlevel>
+
+  <setReuseHydro> false </setReuseHydro>
+  <nReuseHydro> 0 </nReuseHydro>
+
+  <outputFilename>test_3d.dat</outputFilename>
+  <JetScapeWriterAscii> on </JetScapeWriterAscii>
+
+  <write_pthat> 1 </write_pthat>
+
+  <!-- Inital State Module: full 3D (x,y,eta) grid -->
+  <IS>
+      <grid_max_x> 15 </grid_max_x>
+      <grid_max_y> 15 </grid_max_y>
+      <grid_max_z> 6 </grid_max_z>
+      <grid_step_x> 0.5 </grid_step_x>
+      <grid_step_y> 0.5 </grid_step_y>
+      <grid_step_z> 0.4 </grid_step_z>
+
+      <Trento>
+        <PhysicsInputs
+                projectile='Au'
+                target='Au'
+                sqrts='200'
+                cross-section='4.2'
+                normalization='5.73'
+            >
+        </PhysicsInputs>
+        <CutInputs centrality-low='0' centrality-high='10'>
+        </CutInputs>
+        <TransInputs
+                reduced-thickness='0.063'
+                fluctuation="1.05"
+                nucleon-width="1.12"
+                nucleon-min-dist="1.4"
+            >
+        </TransInputs>
+        <LongiInputs
+                mean-coeff="1.0"
+                std-coeff="3.0"
+                skew-coeff="0.0"
+                skew-type="1"
+                jacobian="0.8"
+            >
+        </LongiInputs>
+      </Trento>
+  </IS>
+
+  <!--Preequilibrium Dynamics Module -->
+  <Preequilibrium>
+      <tau0>0.5</tau0>
+      <NullPreDynamics> </NullPreDynamics>
+  </Preequilibrium>
+
+  <!-- Hydro Module: 3D+1 FnoHydro -->
+  <Hydro>
+      <FNO>
+        <model_file
+            >../fno_hydro/models/traced_3d_fno_model.pt</model_file>
+
+        <centrality-low>0</centrality-low>
+        <centrality-high>10</centrality-high>
+        <EOS_id_MUSIC>91</EOS_id_MUSIC>
+
+        <!-- 5 = (energy_density, temperature, vx, vy, vz) -->
+        <n_features>5</n_features>
+        <freezeout_temperature>0.136</freezeout_temperature>
+
+        <nx>30</nx>
+        <ny>30</ny>
+        <neta>15</neta>
+        <ntau>49</ntau>
+
+        <x_min>-15.0</x_min>
+        <y_min>-15.0</y_min>
+        <!-- symmetric eta grid: eta_min = -0.5*deta*(neta-1) -->
+        <eta_min>-2.8</eta_min>
+
+        <dtau>0.1</dtau>
+        <deta>0.4</deta>
+      </FNO>
+  </Hydro>
+
+  <SoftParticlization>
+     <iSS>
+         <!-- file path for the default input file  -->
+         <iSS_input_file>iSS_parameters.dat</iSS_input_file>
+         <!-- directory path where the hydro surface is stored  -->
+         <iSS_table_path>iSS_tables</iSS_table_path>
+         <!-- file path for the default particle table files  -->
+         <iSS_particle_table_path>iSS_tables</iSS_particle_table_path>
+         <afterburner_type>2</afterburner_type>
+         <number_of_repeated_sampling>1</number_of_repeated_sampling>
+         <include_deltaf_shear>0</include_deltaf_shear>
+         <include_deltaf_bulk>0</include_deltaf_bulk>
+         <Perform_resonance_decays>0</Perform_resonance_decays>
+     </iSS>
+   </SoftParticlization>
+
+</jetscape>
