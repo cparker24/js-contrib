@@ -78,6 +78,7 @@ FnoHydro::FnoHydro() : device({}) {
   hydro_status = NOT_START;
   freezeout_temperature = 0.0;
   edensity_times_tau_fno = true;
+  max_rollout_windows = 1;
   //doCooperFrye = 0;
 
   x_min_preq = dx_preq = y_min_preq = dy_preq = 0.0;
@@ -202,6 +203,12 @@ void FnoHydro::InitializeHydro(Parameter parameter_list) {
          << (edensity_times_tau_fno
                  ? "epsilon*tau (dividing by tau on read-back)"
                  : "raw epsilon (no tau division)");
+
+  max_rollout_windows = GetXMLElementInt({"Hydro", "FNO", "max_rollout_windows"});
+  if (max_rollout_windows < 1) max_rollout_windows = 1;
+  JSINFO << "FNO rollout: up to " << max_rollout_windows
+         << " window(s) of ntau=" << ntau_fno << " each (stops early once the "
+         << "hottest cell drops to/below freezeout_temperature)";
 
   /*
   if (freezeout_temperature > 0.05) {
@@ -346,21 +353,48 @@ void FnoHydro::EvolveHydro() {
 
     JSINFO << "Running FNO model hydro time evolution prediction ...";
 
-    std::vector<torch::jit::IValue> inputs;
-    inputs.push_back(fno_input_tensor.unsqueeze(0));
-    // Execute the model and turn its output into a tensor.
-    output = module.forward(inputs).toTensor();
-
     // The batched tau axis shifts by one (a batch dim is prepended) relative
     // to tau_dim computed above.
     int batched_tau_dim = tau_dim + 1;
     torch::Tensor first_ntau_steps = fno_input_tensor.slice(tau_dim, 0, 1).unsqueeze(0);
 
-    // This creates a tensor with shape [n_features, nx_fno, ny_fno, (neta_fno,) ntau_fno]
-    //std::cout << "Original tensor shape: " << fno_input_tensor.sizes() << std::endl;
-    //std::cout << "Selected first " << ntau_fno << " steps shape: " << first_ntau_steps.sizes() << std::endl;
+    // Autoregressive rollout: run the model up to max_rollout_windows times,
+    // each time feeding the previous window's last predicted step back in as
+    // a fresh initial condition, stopping early once the hottest cell has
+    // cooled to/below freezeout_temperature. max_rollout_windows == 1
+    // reproduces the original single-window behavior exactly.
+    torch::Tensor window_ic = fno_input_tensor;
+    std::vector<torch::Tensor> window_outputs;
 
-    output = torch::cat({first_ntau_steps, output}, batched_tau_dim);
+    for (int w = 0; w < max_rollout_windows; ++w) {
+      std::vector<torch::jit::IValue> inputs;
+      inputs.push_back(window_ic.unsqueeze(0));
+      torch::Tensor window_out = module.forward(inputs).toTensor();
+      window_outputs.push_back(window_out);
+
+      for (auto &t : inputs) t.toTensor().reset();
+      inputs.clear();
+
+      if (w + 1 >= max_rollout_windows) break;
+
+      float max_ed = 0.0f;
+      window_ic = BuildNextWindowIC(window_out, batched_tau_dim, is3D, max_ed);
+      float max_T = GetTemperatureFromEos(max_ed);
+
+      JSINFO << "Rollout window " << w << " done, hottest cell: ed = " << max_ed
+             << " GeV/fm^3, T = " << max_T << " GeV";
+
+      if (max_T <= freezeout_temperature) {
+        JSINFO << "Hottest cell at/below freezeout_temperature "
+               << "(" << freezeout_temperature << " GeV) -- stopping rollout.";
+        break;
+      }
+    }
+
+    output = first_ntau_steps;
+    for (auto &w : window_outputs) {
+      output = torch::cat({output, w}, batched_tau_dim);
+    }
 
     shape = output.sizes();
     tensorShapeInput = "Output Tesnor shape from FNO : ";
@@ -371,13 +405,10 @@ void FnoHydro::EvolveHydro() {
         tensorShapeInput += std::to_string(shape[i]) ; tensorShapeInput += " ";
       }
     //std::cout<< tensorShapeInput.c_str() << std::endl;
-    JSINFO << tensorShapeInput.c_str();
+    JSINFO << tensorShapeInput.c_str() << " (" << window_outputs.size()
+           << " rollout window(s))";
 
-    bulk_info.ntau = bulk_info.ntau+1;
-
-    for(auto t : inputs)
-      t.toTensor().reset();
-    inputs.clear();
+    bulk_info.ntau = 1 + ntau_fno * (int) window_outputs.size();
 
     hydro_status = FINISHED;
   }
@@ -404,6 +435,37 @@ void FnoHydro::EvolveHydro() {
   output.reset();
 
 
+}
+
+torch::Tensor FnoHydro::BuildNextWindowIC(const torch::Tensor &window_output,
+                                           int batched_tau_dim, bool is3D,
+                                           float &max_energy_density_out) {
+  // window_output: [1, n_features, nx_fno, ny_fno, (neta_fno,) ntau_fno].
+  // Clone so in-place ops below don't corrupt window_output's storage --
+  // it's also sitting (unmodified/raw) in EvolveHydro's window_outputs
+  // vector, headed for final concatenation into `output`.
+  torch::Tensor last = window_output.select(batched_tau_dim, ntau_fno - 1)
+                            .squeeze(0)
+                            .clone();
+  // last: [n_features, nx_fno, ny_fno, (neta_fno,)]
+
+  if (edensity_times_tau_fno && HasImplicitTemperatureChannel()) {
+    // Same local-window divisor PassHydroEvolutionHistoryToFramework uses:
+    // the model has no notion of the true (growing) global tau across
+    // rollout windows, so its epsilon*tau convention can only be interpreted
+    // relative to its own trained tau0, restarting every window.
+    double denorm_tau = bulk_info.Tau0() + dtau_fno * ntau_fno;
+    last[0] = last[0] / denorm_tau;
+  }
+
+  max_energy_density_out = last[0].max().item<float>();
+
+  int tau_dim = batched_tau_dim - 1;
+  torch::Tensor next_ic = last.unsqueeze(tau_dim);
+  next_ic = is3D
+      ? next_ic.repeat({1, 1, 1, 1, ntau_fno})
+      : next_ic.repeat({1, 1, 1, ntau_fno});
+  return next_ic;
 }
 
 void FnoHydro::SetPreEqGridInfo() {
@@ -538,8 +600,12 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               else if (n_features == 3) {
 
                   float eNorm = accessor[0][i][j][k];
-                  if (edensity_times_tau_fno) {
-                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k);
+                  // k==0 is the true (never tau-multiplied) initial
+                  // condition; k>0 are model-predicted steps, each window
+                  // restarting its local tau-index at 1 (see BuildNextWindowIC).
+                  if (edensity_times_tau_fno && k > 0) {
+                    int k_local = ((k - 1) % ntau_fno) + 1;
+                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k_local);
                   }
                   float mTemperature = GetTemperatureFromEos(eNorm);
 
@@ -577,8 +643,12 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               else if (n_features == 4) {
 
                   float eNorm = accessor[0][i][j][l][k];
-                  if (edensity_times_tau_fno) {
-                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k);
+                  // k==0 is the true (never tau-multiplied) initial
+                  // condition; k>0 are model-predicted steps, each window
+                  // restarting its local tau-index at 1 (see BuildNextWindowIC).
+                  if (edensity_times_tau_fno && k > 0) {
+                    int k_local = ((k - 1) % ntau_fno) + 1;
+                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k_local);
                   }
                   float mTemperature = GetTemperatureFromEos(eNorm);
 

@@ -64,6 +64,40 @@ private:
   // a model trained on raw (un-normalized) epsilon.
   bool edensity_times_tau_fno;
 
+  // Maximum number of ntau_fno-length model windows to chain autoregressively
+  // per event: each window's last predicted step is fed back in as the next
+  // window's initial condition. Defaults to 1 (today's single-window
+  // behavior, unchanged). Rollout stops early, before this cap, once the
+  // hottest cell in the latest window's last step is at/below
+  // freezeout_temperature. See <Hydro><FNO><max_rollout_windows>.
+  //
+  // This is model extrapolation, not a re-derivation of physics: the FNO was
+  // trained on windows starting at tau0 (~0.44 fm/c), so windows 2+ ask it to
+  // predict from an initial condition (its own prior output) unlike anything
+  // it saw during training. Prediction quality beyond the first window is
+  // unvalidated.
+  int max_rollout_windows;
+
+  // Whether n_features encodes an explicit temperature channel (n_features==4
+  // for 2D+1 / ==5 for 3D+1) or not (n_features==3 for 2D+1 / ==4 for 3D+1,
+  // where edensity_times_tau_fno controls whether channel 0 needs a tau
+  // division). Shared by PassHydroEvolutionHistoryToFramework and the
+  // rollout's window-to-window IC handoff so both apply the same rule.
+  inline bool HasImplicitTemperatureChannel() const {
+    return Is3DPlus1() ? (n_features == 4) : (n_features == 3);
+  }
+
+  // Builds the next rollout window's initial-condition tensor (shape
+  // [n_features, nx_fno, ny_fno, (neta_fno,) ntau_fno], already repeated
+  // across the tau axis) from the last predicted step of window_output
+  // (shape [1, n_features, nx_fno, ny_fno, (neta_fno,) ntau_fno]). Also
+  // returns the de-normalized (physical) energy density of that step's
+  // hottest cell in max_energy_density_out, used for the rollout stopping
+  // check.
+  torch::Tensor BuildNextWindowIC(const torch::Tensor &window_output,
+                                   int batched_tau_dim, bool is3D,
+                                   float &max_energy_density_out);
+
   // neta_fno > 1 selects the full 3D+1 (x,y,eta,tau) pipeline; neta_fno == 1
   // keeps the original boost-invariant 2D+1 (x,y,tau) pipeline byte-for-byte,
   // so existing 2D+1-trained traced models keep working unchanged.

@@ -7,9 +7,15 @@
     from train_torch/checkpoints/config.yaml:
       nx=64 ny=64 neta=16 ntau=31  x_min=-10.0 y_min=-10.0 eta_min=-1.5
       dx=dy=0.3125 deta=0.1875 dtau=0.1 tau0~0.44
-    n_features=4 (eps, vx, vy, veta) -- tau-normalization convention on the
-    eps channel is NOT yet confirmed against FnoHydro.cc's expectations;
-    this run is only checking that the pipeline executes end-to-end.
+    n_features=4 (eps, vx, vy, veta), edensity_times_tau=0 (raw epsilon,
+    matches training with normalization: none).
+
+    max_rollout_windows>1 chains the model autoregressively (each window's
+    last predicted step feeds the next window's initial condition) so
+    central events that don't fully cool within one 3.54 fm/c window keep
+    evolving until the hottest cell drops to/below freezeout_temperature,
+    up to the configured cap. This is unvalidated extrapolation past window
+    1 -- the model was never trained on its own rollout output as input.
   -->
 
   <enableAutomaticTaskListDetermination
@@ -99,6 +105,14 @@
              energy_density channel is raw epsilon, not epsilon*tau. -->
         <n_features>4</n_features>
         <edensity_times_tau>0</edensity_times_tau>
+        <!-- Tried max_rollout_windows=4 here: the model's predictions got
+             HOTTER window over window (0.16 -> 0.20 -> 0.35 GeV) instead of
+             cooling -- windows 2+ feed it an already-expanded, flowing
+             profile unlike anything in its training set, and it extrapolates
+             badly rather than degrading gracefully. Left at 1 (single
+             window, original behavior) until a model is trained to be robust
+             to seeing its own rollout output as input. -->
+        <max_rollout_windows>1</max_rollout_windows>
         <freezeout_temperature>0.136</freezeout_temperature>
 
         <nx>64</nx>
