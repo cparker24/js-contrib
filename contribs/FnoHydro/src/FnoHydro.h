@@ -17,6 +17,7 @@
 #define FNOHYDRO_H
 
 #include <memory>
+#include <string>
 
 #include "FluidDynamics.h"
 //#include "hydro_source_base.h"
@@ -55,14 +56,25 @@ private:
 
   int n_features;
 
-  // Whether the model's energy-density channel is epsilon*tau (needs dividing
-  // by tau on read-back) or raw epsilon (no division). The n_features==3 (2D+1)
-  // / n_features==4 (3D+1) branches historically assumed epsilon*tau always;
-  // that only holds for models trained with an etau75-style normalization.
-  // Defaults to true to preserve behavior for those existing models; set
-  // <Hydro><FNO><edensity_times_tau>0</edensity_times_tau></FNO></Hydro> for
-  // a model trained on raw (un-normalized) epsilon.
-  bool edensity_times_tau_fno;
+  // Names the transform training's Normalizer (loc_libs/norm_utils.py)
+  // applied to the model's energy-density channel, so read-back can invert
+  // it. Matches Normalizer.name; only a subset is implemented here (others
+  // are per-(eta,tau) data-driven or need extra trained reference arrays
+  // this module doesn't have access to):
+  //   "none"      -- channel 0 is raw epsilon already, no transform.
+  //   "etau75_3d" -- channel 0 is epsilon^0.75 * tau (see NormFn3d.etau75_3d);
+  //                  inverted as epsilon = clip(channel0/tau, 0, inf)^(4/3).
+  // Applies only where HasImplicitTemperatureChannel() (n_features==3 for
+  // 2D+1 / ==4 for 3D+1); the explicit-temperature variants (4/5) carry raw
+  // epsilon directly regardless of this setting. Set via
+  // <Hydro><FNO><energy_density_normalization>etau75_3d</energy_density_normalization></FNO></Hydro>;
+  // defaults to "none".
+  std::string energy_density_normalization;
+
+  // Inverts energy_density_normalization for one raw channel-0 value at
+  // physical proper time tau_phys. Exits with an error for an unrecognized
+  // scheme name rather than silently applying the wrong physics.
+  float DenormalizeEnergyDensity(float raw, double tau_phys) const;
 
   // Maximum number of ntau_fno-length model windows to chain autoregressively
   // per event: each window's last predicted step is fed back in as the next
@@ -80,9 +92,9 @@ private:
 
   // Whether n_features encodes an explicit temperature channel (n_features==4
   // for 2D+1 / ==5 for 3D+1) or not (n_features==3 for 2D+1 / ==4 for 3D+1,
-  // where edensity_times_tau_fno controls whether channel 0 needs a tau
-  // division). Shared by PassHydroEvolutionHistoryToFramework and the
-  // rollout's window-to-window IC handoff so both apply the same rule.
+  // where energy_density_normalization controls how channel 0 is inverted).
+  // Shared by PassHydroEvolutionHistoryToFramework and the rollout's
+  // window-to-window IC handoff so both apply the same rule.
   inline bool HasImplicitTemperatureChannel() const {
     return Is3DPlus1() ? (n_features == 4) : (n_features == 3);
   }
@@ -97,6 +109,13 @@ private:
   torch::Tensor BuildNextWindowIC(const torch::Tensor &window_output,
                                    int batched_tau_dim, bool is3D,
                                    float &max_energy_density_out);
+
+  // Diagnostic: writes (tau, hottest-cell energy density, hottest-cell
+  // temperature) for every step k=0..bulk_info.ntau-1 in the finished
+  // `output` tensor to a CSV at out_path -- one row per predicted timestep,
+  // spanning every rollout window. Cheap (tensor max-reductions only, no
+  // extra model calls); safe to leave on unconditionally.
+  void WritePeakTemperatureDiagnostics(const std::string &out_path);
 
   // neta_fno > 1 selects the full 3D+1 (x,y,eta,tau) pipeline; neta_fno == 1
   // keeps the original boost-invariant 2D+1 (x,y,tau) pipeline byte-for-byte,

@@ -40,6 +40,7 @@
 
 // User modules derived from jetscape framework clasess
 #include "TrentoInitial.h"
+#include "MCGlauberWrapper.h"
 #include "AdSCFT.h"
 #include "Matter.h"
 #include "LBT.h"
@@ -58,6 +59,7 @@
 #include "ColorlessHadronization.h"
 //#include "HydroFromFile.h"
 #include "FnoHydro.h"
+#include "MusicPrimedPreEq.h"
 
 #include <chrono>
 #include <thread>
@@ -87,15 +89,31 @@ int main(int argc, char** argv)
 
     // -------------------------------------
 
+    // argv[1] = user XML config (default: the v1/normalization=none smoke
+    // test), argv[2] = output filename (default: test_out.dat). Lets the
+    // same binary drive an A/B comparison across FNO model versions without
+    // a separate .cc/target per model -- see config/fno_3d_live_test_v2_etau75.xml
+    // for the sibling config this was built to run alongside.
+    string xmlUserFile =
+        "../external_packages/js-contrib/contribs/FnoHydro/config/fno_3d_live_test_cparker.xml";
+    if (argc > 1)
+      xmlUserFile = argv[1];
+
     auto jetscape = make_shared<JetScape>();
     jetscape->SetXMLMainFileName("../config/jetscape_main.xml");
-    jetscape->SetXMLUserFileName("../external_packages/js-contrib/contribs/FnoHydro/config/fno_3d_live_test_cparker.xml");
+    jetscape->SetXMLUserFileName(xmlUserFile);
     //jetscape->SetReuseHydro (false);
     //jetscape->SetNReuseHydro (0);
 
     // Initial conditions and hydro
-    auto trento = make_shared<TrentoInitial>();
-    auto null_predynamics = make_shared<NullPreDynamics> ();
+    // MCGlauber (not TrentoInitial): matches the initial-state model that
+    // actually generated FNO4d's training data (xmls/AuAu_50ev_0_10.xml).
+    auto trento = make_shared<MCGlauberWrapper>();
+    // MusicPrimedPreEq (not plain NullPreDynamics): primes a real
+    // MCGlauber+MUSIC medium (InitialProfile=131) up to <Preequilibrium><taus>
+    // and hands FnoHydro that genuine snapshot, instead of a raw (unusable)
+    // string list. See MusicPrimedPreEq.h.
+    auto null_predynamics = make_shared<MusicPrimedPreEq> ();
     auto pGun= make_shared<PGun> ();
     auto hydro = make_shared<FnoHydro> ();
     //auto hydro = make_shared<MpiMusic> ();
@@ -130,8 +148,8 @@ int main(int argc, char** argv)
     jetscape->Add(hadroMgr);
 
     string fName="test_out.dat";
-    if (argc > 1)
-      fName = argv[1];
+    if (argc > 2)
+      fName = argv[2];
 
     auto writer= make_shared<JetScapeWriterAscii> (fName);
     jetscape->Add(writer);

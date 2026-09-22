@@ -12,7 +12,7 @@ foreach(_exe fnoHydroTest fnoHydroLiveTest3D fnoRooInTest BulkFnoRooIn JetFnoRoo
   target_include_directories(${_exe} PRIVATE ${JetScape_INCLUDE_DIRS})
 endforeach()
 
-foreach(_exe simpleReaderAna bulkAna jetAna)
+foreach(_exe simpleReaderAna bulkAna jetAna standardHydroLiveTest3D)
   add_executable(${_exe} ${CMAKE_CURRENT_SOURCE_DIR}/${_exe}.cc)
   target_link_libraries(${_exe} JetScape ${ROOT_LIBRARIES})
   target_include_directories(${_exe} PRIVATE ${JetScape_INCLUDE_DIRS})

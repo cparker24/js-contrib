@@ -19,8 +19,10 @@
 
 #include <string>
 #include <sstream>
+#include <fstream>
 #include <vector>
 #include <memory>
+#include <cmath>
 
 #include "JetScapeLogger.h"
 //#include "surfaceCell.h"
@@ -77,7 +79,7 @@ void GetCellIndicesFromGlobalPreqIndex(int global_index, int& id_x, int& id_y)
 FnoHydro::FnoHydro() : device({}) {
   hydro_status = NOT_START;
   freezeout_temperature = 0.0;
-  edensity_times_tau_fno = true;
+  energy_density_normalization = "none";
   max_rollout_windows = 1;
   //doCooperFrye = 0;
 
@@ -192,17 +194,24 @@ void FnoHydro::InitializeHydro(Parameter parameter_list) {
   JSINFO<<"Use EOS (Music id) = "<<EOS_id_MUSIC;
   fnoEOS=make_unique<EOS>(EOS_id_MUSIC);
 
-  // Optional override: absent means "keep the true default" (existing
-  // epsilon*tau-trained models keep working unchanged).
-  std::string edensity_times_tau_text =
-      GetXMLElementText({"Hydro", "FNO", "edensity_times_tau"}, false);
-  if (!edensity_times_tau_text.empty()) {
-    edensity_times_tau_fno = (std::stoi(edensity_times_tau_text) != 0);
+  // Optional override: absent means "keep the true default" (none -- raw
+  // epsilon, no transform to invert).
+  std::string norm_text = GetXMLElementText(
+      {"Hydro", "FNO", "energy_density_normalization"}, false);
+  if (!norm_text.empty()) {
+    energy_density_normalization = norm_text;
   }
-  JSINFO << "FNO energy-density channel convention: "
-         << (edensity_times_tau_fno
-                 ? "epsilon*tau (dividing by tau on read-back)"
-                 : "raw epsilon (no tau division)");
+  if (energy_density_normalization != "none" &&
+      energy_density_normalization != "etau75_3d") {
+    JSWARN << "Unsupported energy_density_normalization: '"
+           << energy_density_normalization << "' -- supported: none, etau75_3d "
+           << "(loc_libs/norm_utils.py has other schemes, e.g. etau75_eta_3d, "
+           << "cosh_etau75_3d, that need trained reference data this module "
+           << "doesn't load; not implemented here).";
+    exit(-1);
+  }
+  JSINFO << "FNO energy-density channel normalization: "
+         << energy_density_normalization;
 
   max_rollout_windows = GetXMLElementInt({"Hydro", "FNO", "max_rollout_windows"});
   if (max_rollout_windows < 1) max_rollout_windows = 1;
@@ -423,6 +432,11 @@ void FnoHydro::EvolveHydro() {
   //cout<<bulk_info.XMin()<<" "<<bulk_info.XMax()<<" "<<bulk_info.nx<<" "<<bulk_info.dx<<endl;
   //cout<<bulk_info.YMin()<<" "<<bulk_info.YMax()<<" "<<bulk_info.ny<<" "<<bulk_info.dy<<endl;
 
+  static int fno_event_counter = 0;
+  WritePeakTemperatureDiagnostics(
+      "peak_temperature_event" + std::to_string(fno_event_counter) + ".csv");
+  ++fno_event_counter;
+
   PassHydroEvolutionHistoryToFramework();
 
   JSINFO << "number of fluid cells received by the JETSCAPE: "
@@ -437,6 +451,48 @@ void FnoHydro::EvolveHydro() {
 
 }
 
+void FnoHydro::WritePeakTemperatureDiagnostics(const std::string &out_path) {
+  torch::Tensor flattened = torch::squeeze(output, 0);
+  // flattened: [n_features, nx, ny, (neta,) ntau] -- tau is always the last dim.
+  int tau_axis = flattened.dim() - 1;
+
+  std::ofstream f(out_path);
+  f << "k,tau_fm,max_energy_density_GeV_fm3,max_temperature_GeV\n";
+  for (int k = 0; k < bulk_info.ntau; ++k) {
+    torch::Tensor step_channel0 = flattened.select(tau_axis, k).select(0, 0);
+    float max_ed = step_channel0.max().item<float>();
+    // DenormalizeEnergyDensity is monotonic increasing in raw (for raw >= 0),
+    // so applying it to the raw max is equivalent to (and cheaper than)
+    // denormalizing every cell and re-maxing.
+    if (HasImplicitTemperatureChannel() && k > 0) {
+      int k_local = ((k - 1) % ntau_fno) + 1;
+      max_ed = DenormalizeEnergyDensity(max_ed, bulk_info.Tau0() + bulk_info.dtau * k_local);
+    }
+    float max_T = GetTemperatureFromEos(max_ed);
+    double tau_phys = bulk_info.Tau0() + bulk_info.dtau * k;
+    f << k << "," << tau_phys << "," << max_ed << "," << max_T << "\n";
+  }
+  f.close();
+  JSINFO << "Wrote peak-temperature diagnostics to " << out_path;
+}
+
+float FnoHydro::DenormalizeEnergyDensity(float raw, double tau_phys) const {
+  if (energy_density_normalization == "none") {
+    return raw;
+  }
+  if (energy_density_normalization == "etau75_3d") {
+    // Inverse of NormFn3d.etau75_3d: channel0 = epsilon^0.75 * tau, so
+    // epsilon = clip(channel0/tau, 0, inf)^(4/3). Matches
+    // NormFn3d.inv_etau75_3d's 1e-6 floor on tau.
+    double base = raw / (tau_phys + 1e-6);
+    if (base < 0.0) base = 0.0;
+    return static_cast<float>(std::pow(base, 4.0 / 3.0));
+  }
+  // InitializeHydro already validated the name; unreachable in practice.
+  JSWARN << "Unsupported energy_density_normalization: " << energy_density_normalization;
+  exit(-1);
+}
+
 torch::Tensor FnoHydro::BuildNextWindowIC(const torch::Tensor &window_output,
                                            int batched_tau_dim, bool is3D,
                                            float &max_energy_density_out) {
@@ -449,13 +505,17 @@ torch::Tensor FnoHydro::BuildNextWindowIC(const torch::Tensor &window_output,
                             .clone();
   // last: [n_features, nx_fno, ny_fno, (neta_fno,)]
 
-  if (edensity_times_tau_fno && HasImplicitTemperatureChannel()) {
-    // Same local-window divisor PassHydroEvolutionHistoryToFramework uses:
-    // the model has no notion of the true (growing) global tau across
-    // rollout windows, so its epsilon*tau convention can only be interpreted
-    // relative to its own trained tau0, restarting every window.
+  if (HasImplicitTemperatureChannel() && energy_density_normalization != "none") {
+    // Same local-window tau PassHydroEvolutionHistoryToFramework uses: the
+    // model has no notion of the true (growing) global tau across rollout
+    // windows, so its normalization can only be interpreted relative to its
+    // own trained tau0, restarting every window.
     double denorm_tau = bulk_info.Tau0() + dtau_fno * ntau_fno;
-    last[0] = last[0] / denorm_tau;
+    torch::Tensor ch0 = last[0];
+    float *data = ch0.data_ptr<float>();
+    for (int64_t idx = 0; idx < ch0.numel(); ++idx) {
+      data[idx] = DenormalizeEnergyDensity(data[idx], denorm_tau);
+    }
   }
 
   max_energy_density_out = last[0].max().item<float>();
@@ -600,12 +660,12 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               else if (n_features == 3) {
 
                   float eNorm = accessor[0][i][j][k];
-                  // k==0 is the true (never tau-multiplied) initial
-                  // condition; k>0 are model-predicted steps, each window
-                  // restarting its local tau-index at 1 (see BuildNextWindowIC).
-                  if (edensity_times_tau_fno && k > 0) {
+                  // k==0 is the true (never normalized) initial condition;
+                  // k>0 are model-predicted steps, each window restarting
+                  // its local tau-index at 1 (see BuildNextWindowIC).
+                  if (k > 0) {
                     int k_local = ((k - 1) % ntau_fno) + 1;
-                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k_local);
+                    eNorm = DenormalizeEnergyDensity(eNorm, bulk_info.Tau0()+bulk_info.dtau*k_local);
                   }
                   float mTemperature = GetTemperatureFromEos(eNorm);
 
@@ -643,12 +703,12 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               else if (n_features == 4) {
 
                   float eNorm = accessor[0][i][j][l][k];
-                  // k==0 is the true (never tau-multiplied) initial
-                  // condition; k>0 are model-predicted steps, each window
-                  // restarting its local tau-index at 1 (see BuildNextWindowIC).
-                  if (edensity_times_tau_fno && k > 0) {
+                  // k==0 is the true (never normalized) initial condition;
+                  // k>0 are model-predicted steps, each window restarting
+                  // its local tau-index at 1 (see BuildNextWindowIC).
+                  if (k > 0) {
                     int k_local = ((k - 1) % ntau_fno) + 1;
-                    eNorm /= (bulk_info.Tau0()+bulk_info.dtau*k_local);
+                    eNorm = DenormalizeEnergyDensity(eNorm, bulk_info.Tau0()+bulk_info.dtau*k_local);
                   }
                   float mTemperature = GetTemperatureFromEos(eNorm);
 

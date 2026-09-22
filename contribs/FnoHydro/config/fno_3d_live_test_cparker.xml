@@ -7,8 +7,8 @@
     from train_torch/checkpoints/config.yaml:
       nx=64 ny=64 neta=16 ntau=31  x_min=-10.0 y_min=-10.0 eta_min=-1.5
       dx=dy=0.3125 deta=0.1875 dtau=0.1 tau0~0.44
-    n_features=4 (eps, vx, vy, veta), edensity_times_tau=0 (raw epsilon,
-    matches training with normalization: none).
+    n_features=4 (eps, vx, vy, veta), energy_density_normalization=none
+    (matches training with normalization: none).
 
     max_rollout_windows>1 chains the model autoregressively (each window's
     last predicted step feeds the next window's initial condition) so
@@ -16,12 +16,15 @@
     evolving until the hottest cell drops to/below freezeout_temperature,
     up to the configured cap. This is unvalidated extrapolation past window
     1 -- the model was never trained on its own rollout output as input.
+    Left at 1 (single window) here -- see peak_temperature_event*.csv /
+    the FNO Rollout Peak Temperature artifact for why: windows 2+ reheat
+    instead of cooling for this model.
   -->
 
   <enableAutomaticTaskListDetermination
     > false </enableAutomaticTaskListDetermination>
 
-  <nEvents> 2 </nEvents>
+  <nEvents> 100 </nEvents>
 
   <Random>
     <seed>1</seed>
@@ -104,7 +107,7 @@
              none (see FNO4d/train_torch/checkpoints/config.yaml), so the
              energy_density channel is raw epsilon, not epsilon*tau. -->
         <n_features>4</n_features>
-        <edensity_times_tau>0</edensity_times_tau>
+        <energy_density_normalization>none</energy_density_normalization>
         <!-- Tried max_rollout_windows=4 here: the model's predictions got
              HOTTER window over window (0.16 -> 0.20 -> 0.35 GeV) instead of
              cooling -- windows 2+ feed it an already-expanded, flowing
