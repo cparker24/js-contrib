@@ -84,7 +84,15 @@ public:
     primer->ini = ini;
     primer->pre_eq_ptr = primer_stub;
     primer->InitializeHydro(Parameter());
-    primer->EvolveHydroUpto(tau_prime_end);
+    // MUSIC::run_hydro_upto() rounds its target down to a whole number of
+    // internal sub-steps, so priming to exactly tau_prime_end can leave the
+    // stored history's TauMax() one step short of tau_prime_end itself --
+    // CheckInRange() then rejects the query we're about to make below and
+    // silently hands back a zero-valued cell. Pad the priming target so the
+    // query point sits safely inside (not right on the edge of) the stored
+    // range.
+    const double priming_margin = 0.1;
+    primer->EvolveHydroUpto(tau_prime_end + priming_margin);
     // EvolveHydroUpto() alone leaves bulk_info (the framework-side cache
     // GetHydroInfo() reads from) empty -- that only gets populated at the
     // tail of the full EvolveHydro() pipeline. Populate it explicitly from
