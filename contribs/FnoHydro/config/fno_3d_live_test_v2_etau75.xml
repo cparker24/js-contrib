@@ -3,9 +3,10 @@
 
   <!--
     Comparison run for the retrained FNO4d model (train_torch/checkpoints,
-    Sep 22 2026 retrain), traced via export_torchscript.py, grid taken from
-    the new checkpoints/config.yaml:
-      nx=64 ny=64 neta=16 ntau=34  x_min=-10.0 y_min=-10.0 eta_min=-1.5
+    Oct 2 2026 retrain, tauslice widened to 100, 30 epochs -- see
+    train_torch/out/epoch_scan_50ep/README.md for why 30), traced via
+    export_torchscript.py, grid taken from the new checkpoints/config.yaml:
+      nx=64 ny=64 neta=16 ntau=99  x_min=-10.0 y_min=-10.0 eta_min=-1.5
       dx=dy=0.3125 deta=0.1875 dtau=0.1 tau0~0.44
     n_features=4 (eps, vx, vy, veta), energy_density_normalization=etau75_3d
     (matches training with normalization: {name: etau75_3d, alpha: 1.0} --
@@ -189,7 +190,7 @@
         <nx>64</nx>
         <ny>64</ny>
         <neta>16</neta>
-        <ntau>34</ntau>
+        <ntau>99</ntau>
 
         <x_min>-10.0</x_min>
         <y_min>-10.0</y_min>

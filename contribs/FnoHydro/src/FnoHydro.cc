@@ -301,7 +301,7 @@ void FnoHydro::EvolveHydro() {
               fno_input_tensor[3][i][j][k] = 0;
           }
           else if (n_features == 3) {
-              fno_input_tensor[0][i][j][k] = ed;
+              fno_input_tensor[0][i][j][k] = NormalizeEnergyDensity(ed, tau0);
               // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
               fno_input_tensor[1][i][j][k] = 0;
               fno_input_tensor[2][i][j][k] = 0;
@@ -333,7 +333,7 @@ void FnoHydro::EvolveHydro() {
                 fno_input_tensor[4][i][j][l][k] = 0;
             }
             else if (n_features == 4) {
-                fno_input_tensor[0][i][j][l][k] = ed;
+                fno_input_tensor[0][i][j][l][k] = NormalizeEnergyDensity(ed, tau0);
                 // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
                 fno_input_tensor[1][i][j][l][k] = 0;
                 fno_input_tensor[2][i][j][l][k] = 0;
@@ -476,6 +476,19 @@ void FnoHydro::WritePeakTemperatureDiagnostics(const std::string &out_path) {
   JSINFO << "Wrote peak-temperature diagnostics to " << out_path;
 }
 
+float FnoHydro::NormalizeEnergyDensity(float raw_ed, double tau_phys) const {
+  if (energy_density_normalization == "none") {
+    return raw_ed;
+  }
+  if (energy_density_normalization == "etau75_3d") {
+    // Forward of NormFn3d.etau75_3d: channel0 = epsilon^0.75 * tau.
+    double base = raw_ed < 0.0 ? 0.0 : raw_ed;
+    return static_cast<float>(std::pow(base, 0.75) * tau_phys);
+  }
+  JSWARN << "Unsupported energy_density_normalization: " << energy_density_normalization;
+  exit(-1);
+}
+
 float FnoHydro::DenormalizeEnergyDensity(float raw, double tau_phys) const {
   if (energy_density_normalization == "none") {
     return raw;
@@ -510,15 +523,26 @@ torch::Tensor FnoHydro::BuildNextWindowIC(const torch::Tensor &window_output,
     // model has no notion of the true (growing) global tau across rollout
     // windows, so its normalization can only be interpreted relative to its
     // own trained tau0, restarting every window.
+    //
+    // Denormalize onto a separate copy only for the physical max reported
+    // below -- `last` itself must stay in the model's own normalized
+    // representation, since it's repeated into next_ic and fed straight
+    // back into the model. Mutating last[0] in place here was a bug: it
+    // handed the next window raw physical epsilon where the model expects
+    // e.g. epsilon^0.75*tau, the same systematic input-scale mismatch fixed
+    // in EvolveHydro's initial-condition construction, compounding window
+    // over window -- very likely the real driver of the "rollout reheating"
+    // behavior observed with max_rollout_windows > 1.
     double denorm_tau = bulk_info.Tau0() + dtau_fno * ntau_fno;
-    torch::Tensor ch0 = last[0];
-    float *data = ch0.data_ptr<float>();
-    for (int64_t idx = 0; idx < ch0.numel(); ++idx) {
+    torch::Tensor ch0_physical = last[0].clone();
+    float *data = ch0_physical.data_ptr<float>();
+    for (int64_t idx = 0; idx < ch0_physical.numel(); ++idx) {
       data[idx] = DenormalizeEnergyDensity(data[idx], denorm_tau);
     }
+    max_energy_density_out = ch0_physical.max().item<float>();
+  } else {
+    max_energy_density_out = last[0].max().item<float>();
   }
-
-  max_energy_density_out = last[0].max().item<float>();
 
   int tau_dim = batched_tau_dim - 1;
   torch::Tensor next_ic = last.unsqueeze(tau_dim);

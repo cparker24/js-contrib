@@ -76,6 +76,17 @@ private:
   // scheme name rather than silently applying the wrong physics.
   float DenormalizeEnergyDensity(float raw, double tau_phys) const;
 
+  // Forward direction of energy_density_normalization: converts one
+  // physical epsilon value (GeV/fm^3) at proper time tau_phys into the raw
+  // channel-0 representation the model was trained on. Must be applied to
+  // the primed initial condition before it's fed to the model -- without
+  // this, the model receives raw epsilon where it expects e.g.
+  // epsilon^0.75*tau, a systematic input-scale mismatch (raw epsilon is
+  // always >= the normalized value for epsilon >= 1, which is the typical
+  // regime here) that shows up as the model over-predicting temperature at
+  // every tau step, not just failing to converge at late times.
+  float NormalizeEnergyDensity(float raw_ed, double tau_phys) const;
+
   // Maximum number of ntau_fno-length model windows to chain autoregressively
   // per event: each window's last predicted step is fed back in as the next
   // window's initial condition. Defaults to 1 (today's single-window

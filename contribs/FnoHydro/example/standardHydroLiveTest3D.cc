@@ -51,6 +51,11 @@ using namespace Jetscape;
 
 void Show();
 
+// Peak-temperature diagnostic (music_peak_temperature_event<N>.csv) is
+// written from inside MpiMusic::EvolveHydro() itself (MusicWrapper.cc) --
+// bulk_info gets cleared by the framework's per-event cleanup before Exec()
+// returns control here, so it can't be read from the driver after the fact.
+
 int main(int argc, char** argv)
 {
     clock_t t; t = clock();
