@@ -64,9 +64,10 @@ private:
   //   "none"      -- channel 0 is raw epsilon already, no transform.
   //   "etau75_3d" -- channel 0 is epsilon^0.75 * tau (see NormFn3d.etau75_3d);
   //                  inverted as epsilon = clip(channel0/tau, 0, inf)^(4/3).
-  // Applies only where HasImplicitTemperatureChannel() (n_features==3 for
-  // 2D+1 / ==4 for 3D+1); the explicit-temperature variants (4/5) carry raw
-  // epsilon directly regardless of this setting. Set via
+  // Applies to channel 0 (energy density) whenever this is not "none",
+  // regardless of whether the model has an explicit temperature channel
+  // (NormFn3d.py normalizes channel 0 and passes every other channel,
+  // including an explicit temperature channel, through unchanged). Set via
   // <Hydro><FNO><energy_density_normalization>etau75_3d</energy_density_normalization></FNO></Hydro>;
   // defaults to "none".
   std::string energy_density_normalization;
@@ -103,9 +104,9 @@ private:
 
   // Whether n_features encodes an explicit temperature channel (n_features==4
   // for 2D+1 / ==5 for 3D+1) or not (n_features==3 for 2D+1 / ==4 for 3D+1,
-  // where energy_density_normalization controls how channel 0 is inverted).
-  // Shared by PassHydroEvolutionHistoryToFramework and the rollout's
-  // window-to-window IC handoff so both apply the same rule.
+  // where temperature is instead derived from channel 0 via the EOS). This
+  // only selects how temperature is obtained -- energy_density_normalization
+  // governs channel 0 independently of this flag (see above).
   inline bool HasImplicitTemperatureChannel() const {
     return Is3DPlus1() ? (n_features == 4) : (n_features == 3);
   }

@@ -294,7 +294,7 @@ void FnoHydro::EvolveHydro() {
 
               double T = GetTemperatureFromEos(ed);
 
-              fno_input_tensor[0][i][j][k] = ed;
+              fno_input_tensor[0][i][j][k] = NormalizeEnergyDensity(ed, tau0);
               fno_input_tensor[1][i][j][k] = T;
               // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
               fno_input_tensor[2][i][j][k] = 0;
@@ -319,13 +319,15 @@ void FnoHydro::EvolveHydro() {
             double ed = pre_eq_ptr->e_[preq_glob_index];
 
             // n_features == 5: (energy_density, temperature, vx, vy, vz);
-            // n_features == 4: (energy_density*tau, vx, vy, vz) -- de-normalized
-            // by tau on read-back, see PassHydroEvolutionHistoryToFramework.
+            // n_features == 4: (energy_density, vx, vy, vz) -- implicit
+            // temperature, derived from channel 0 via the EOS on read-back.
+            // Channel 0 is normalized the same way in both cases, see
+            // energy_density_normalization and PassHydroEvolutionHistoryToFramework.
             if (n_features == 5) {
 
                 double T = GetTemperatureFromEos(ed);
 
-                fno_input_tensor[0][i][j][l][k] = ed;
+                fno_input_tensor[0][i][j][l][k] = NormalizeEnergyDensity(ed, tau0);
                 fno_input_tensor[1][i][j][l][k] = T;
                 // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
                 fno_input_tensor[2][i][j][l][k] = 0;
@@ -463,9 +465,13 @@ void FnoHydro::WritePeakTemperatureDiagnostics(const std::string &out_path) {
     float max_ed = step_channel0.max().item<float>();
     // DenormalizeEnergyDensity is monotonic increasing in raw (for raw >= 0),
     // so applying it to the raw max is equivalent to (and cheaper than)
-    // denormalizing every cell and re-maxing.
-    if (HasImplicitTemperatureChannel() && k > 0) {
-      int k_local = ((k - 1) % ntau_fno) + 1;
+    // denormalizing every cell and re-maxing. Channel 0 is normalized at
+    // every k, including k==0 (EvolveHydro's input construction applies
+    // NormalizeEnergyDensity to the initial condition too), so this must
+    // run unconditionally whenever a normalization scheme is active --
+    // independent of whether temperature is implicit or an explicit channel.
+    if (energy_density_normalization != "none") {
+      int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
       max_ed = DenormalizeEnergyDensity(max_ed, bulk_info.Tau0() + bulk_info.dtau * k_local);
     }
     float max_T = GetTemperatureFromEos(max_ed);
@@ -518,7 +524,7 @@ torch::Tensor FnoHydro::BuildNextWindowIC(const torch::Tensor &window_output,
                             .clone();
   // last: [n_features, nx_fno, ny_fno, (neta_fno,)]
 
-  if (HasImplicitTemperatureChannel() && energy_density_normalization != "none") {
+  if (energy_density_normalization != "none") {
     // Same local-window tau PassHydroEvolutionHistoryToFramework uses: the
     // model has no notion of the true (growing) global tau across rollout
     // windows, so its normalization can only be interpreted relative to its
@@ -676,21 +682,27 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               std::unique_ptr<FluidCellInfo> fluid_cell_info_ptr(new FluidCellInfo);
 
               if (n_features == 4 ) {
-                  fluid_cell_info_ptr->energy_density = accessor[0][i][j][k];
+                  // k local tau-index within the current rollout window --
+                  // each window restarts at 1, k==0 is the global initial
+                  // condition (see BuildNextWindowIC).
+                  int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
+                  double tau_phys = bulk_info.Tau0() + bulk_info.dtau * k_local;
+                  fluid_cell_info_ptr->energy_density =
+                      DenormalizeEnergyDensity(accessor[0][i][j][k], tau_phys);
                   fluid_cell_info_ptr->temperature = accessor[1][i][j][k];
                   fluid_cell_info_ptr->vx = accessor[2][i][j][k];
                   fluid_cell_info_ptr->vy = accessor[3][i][j][k];
               }
               else if (n_features == 3) {
 
-                  float eNorm = accessor[0][i][j][k];
-                  // k==0 is the true (never normalized) initial condition;
-                  // k>0 are model-predicted steps, each window restarting
-                  // its local tau-index at 1 (see BuildNextWindowIC).
-                  if (k > 0) {
-                    int k_local = ((k - 1) % ntau_fno) + 1;
-                    eNorm = DenormalizeEnergyDensity(eNorm, bulk_info.Tau0()+bulk_info.dtau*k_local);
-                  }
+                  // k local tau-index within the current rollout window --
+                  // each window restarts at 1, k==0 is the global initial
+                  // condition (see BuildNextWindowIC). Channel 0 is
+                  // normalized at every k, including k==0 (EvolveHydro's
+                  // input construction normalizes the initial condition too).
+                  int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
+                  float eNorm = DenormalizeEnergyDensity(
+                      accessor[0][i][j][k], bulk_info.Tau0()+bulk_info.dtau*k_local);
                   float mTemperature = GetTemperatureFromEos(eNorm);
 
                   fluid_cell_info_ptr->energy_density = eNorm;
@@ -718,7 +730,17 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               std::unique_ptr<FluidCellInfo> fluid_cell_info_ptr(new FluidCellInfo);
 
               if (n_features == 5) {
-                  fluid_cell_info_ptr->energy_density = accessor[0][i][j][l][k];
+                  // k local tau-index within the current rollout window --
+                  // each window restarts at 1, k==0 is the global initial
+                  // condition (see BuildNextWindowIC). Channel 0 is
+                  // normalized at every k, including k==0 (EvolveHydro's
+                  // input construction normalizes the initial condition too);
+                  // channel 1 (temperature) is passed through unchanged by
+                  // NormFn3d.py, so it needs no inverse transform here.
+                  int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
+                  double tau_phys = bulk_info.Tau0() + bulk_info.dtau * k_local;
+                  fluid_cell_info_ptr->energy_density =
+                      DenormalizeEnergyDensity(accessor[0][i][j][l][k], tau_phys);
                   fluid_cell_info_ptr->temperature = accessor[1][i][j][l][k];
                   fluid_cell_info_ptr->vx = accessor[2][i][j][l][k];
                   fluid_cell_info_ptr->vy = accessor[3][i][j][l][k];
@@ -726,14 +748,14 @@ void FnoHydro::PassHydroEvolutionHistoryToFramework() {
               }
               else if (n_features == 4) {
 
-                  float eNorm = accessor[0][i][j][l][k];
-                  // k==0 is the true (never normalized) initial condition;
-                  // k>0 are model-predicted steps, each window restarting
-                  // its local tau-index at 1 (see BuildNextWindowIC).
-                  if (k > 0) {
-                    int k_local = ((k - 1) % ntau_fno) + 1;
-                    eNorm = DenormalizeEnergyDensity(eNorm, bulk_info.Tau0()+bulk_info.dtau*k_local);
-                  }
+                  // k local tau-index within the current rollout window --
+                  // each window restarts at 1, k==0 is the global initial
+                  // condition (see BuildNextWindowIC). Channel 0 is
+                  // normalized at every k, including k==0 (EvolveHydro's
+                  // input construction normalizes the initial condition too).
+                  int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
+                  float eNorm = DenormalizeEnergyDensity(
+                      accessor[0][i][j][l][k], bulk_info.Tau0()+bulk_info.dtau*k_local);
                   float mTemperature = GetTemperatureFromEos(eNorm);
 
                   fluid_cell_info_ptr->energy_density = eNorm;
