@@ -114,12 +114,24 @@ public:
     int neta = ini->GetZSize();
 
     preequilibrium_status_ = INIT;
-    for (int k = 0; k < neta; ++k) {
-      double eta = eta_min + k * deta;
-      for (int i = 0; i < nx; ++i) {
-        double x = x_min + i * dx;
-        for (int j = 0; j < ny; ++j) {
-          double y = y_min + j * dy;
+    // Fill order must be (x, y, eta) with eta fastest-varying, matching
+    // GetPreqCellIndex's indexing formula -- which in turn matches the
+    // framework-wide convention (EvolutionHistory::CellIndex: id_x*ny*neta +
+    // id_y*neta + id_eta). This loop previously nested eta outermost and y
+    // innermost, filling e_ in a completely different order than
+    // FnoHydro::GetPreqCellIndex expects to read it back in: every lookup
+    // landed on the wrong (x,y,eta) cell. Same pool of values (so aggregate
+    // stats like the peak magnitude looked reasonable), scrambled locations
+    // (so the spatial pattern the FNO model actually saw bore no resemblance
+    // to the real initial condition) -- this is almost certainly why live
+    // FNO inference diverges from real MUSIC while offline evaluation on
+    // correctly-ordered training data does not.
+    for (int i = 0; i < nx; ++i) {
+      double x = x_min + i * dx;
+      for (int j = 0; j < ny; ++j) {
+        double y = y_min + j * dy;
+        for (int k = 0; k < neta; ++k) {
+          double eta = eta_min + k * deta;
           // GetHydroInfo (-> EvolutionHistory::get_tz) takes genuine
           // Minkowski (t,z), converting internally via
           // tau=sqrt(t^2-z^2), eta=atanh(z/t) -- NOT (tau,eta) directly.
