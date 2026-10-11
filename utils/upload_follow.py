@@ -10,14 +10,15 @@ REMOTE/SUB in the namespace; OUTBASE/seeds_used.tsv to REMOTE/seeds_used.tsv.
 
 A job is uploaded once its <stem>.json says it is complete (the test run_jobs.sh uses to skip
 it) and its files have not changed for --settle seconds: <stem>.h5 (pair), <stem>_particlize.h5,
-<stem>.json, .log, .xml.  The upload is the tool's own (remote_transfer/js_osdf.py: the size the
+<stem>_hadrons_bulk_bg.h5 / _hadrons_jet_frag.h5 (when a job writes them, e.g. prod_OO_isr),
+<stem>.json, .log, .xml.  Events a driver skipped on purpose (events_skipped) count as done.  The upload is the tool's own (remote_transfer/js_osdf.py: the size the
 origin stores is checked, the CRC32C goes into the remote manifest).
 
 Deleting (--delete, default none) removes only HDF5 files that are VERIFIED: re-checked right
 before deletion, the origin holds a file of the local size and the remote manifest has the CRC32C
 of the local file.  --verify-every N also downloads every Nth file to be deleted and compares it
 byte by byte first.  The .json/.log/.xml always stay: run_jobs.sh needs the .json to skip
-finished jobs on a re-run.
+finished jobs on a re-run; the hadron files are never deleted.
 
     --delete none     keep everything (default)
     --delete pair     delete <stem>.h5 (the hydro history); keep <stem>_particlize.h5
@@ -63,6 +64,7 @@ STATE = "upload_state.json"
 FINAL = ".upload_final"
 VERIFY_DIR = ".upload_verify"
 SMALL = (".json", ".log", ".xml")
+HADRONS = ("_hadrons_bulk_bg.h5", "_hadrons_jet_frag.h5")       # written in the job (prod_OO_isr)
 DELETE_KINDS = {"none": (), "pair": ("pair",), "all": ("pair", "particlize")}
 DIR_EXTRAS = ("run_jobs.campaign", "run_jobs.finished")
 
@@ -72,9 +74,11 @@ def log(msg):
 
 
 def kind(p):
-    """pair (<stem>.h5), particlize (<stem>_particlize.h5) or other."""
+    """pair (<stem>.h5), particlize (<stem>_particlize.h5), hadrons (<stem>_hadrons_*.h5) or other."""
     if p.name.endswith("_particlize.h5"):
         return "particlize"
+    if "_hadrons_" in p.name and p.suffix == ".h5":
+        return "hadrons"
     return "pair" if p.suffix == ".h5" else "other"
 
 
@@ -135,13 +139,14 @@ class Follower:
         return out
 
     def finished_jobs(self, d):
-        """Stems of the jobs in d whose .json says complete."""
+        """Stems of the jobs in d whose .json says complete (run_jobs.sh's test)."""
         stems = []
         for j in sorted(d.glob("*.json")):
             try:
                 r = json.loads(j.read_text())
-                ev = r["events_requested"]
-                if r["events_written"] == ev and r.get("particlize_events_written", ev) == ev:
+                ev, sk = r["events_requested"], r.get("events_skipped", 0)
+                pw = r.get("particlize_events_written")
+                if r["events_written"] + sk == ev and (pw is None or pw + sk == ev):
                     stems.append(j.name[:-5])
             except (ValueError, KeyError, OSError):
                 continue                              # not a job summary, or being written
@@ -153,7 +158,7 @@ class Follower:
         for d in self.subdirs():
             names = []
             for stem in self.finished_jobs(d):
-                names += [stem + s for s in (".h5", "_particlize.h5") + SMALL]
+                names += [stem + s for s in (".h5", "_particlize.h5") + HADRONS + SMALL]
             if final:
                 names += list(DIR_EXTRAS)
             for n in names:

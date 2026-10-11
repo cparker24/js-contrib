@@ -62,11 +62,20 @@
 # Environment overrides: JOBS_PER_GPU (8), OMP_THREADS (4), IMAGE, WORKDIR ($HOME/prod_test).
 # MUSIC_CUDA_SYNC (block|yield|spin|auto) is passed to the jobs if set; block: ~30 % less CPU
 # per event, needed for 10 jobs/GPU to pay off.
+# PROD=oo runs prod_OO_isr instead (use launch_2gpu_oo.sh, which sets it and the O+O defaults).
 # Why one container per GPU: two MPS daemons in one container hang the second GPU's jobs.
 # Options, campaign default and how to run a campaign: README_launch.md.
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-usage() { awk 'NR > 1 && /^set -u/ { exit } NR > 1' "$0"; exit 2; }
+usage() { awk 'NR > 1 && /^set -u/ { exit } NR > 1' "${LAUNCH_HELP:-$0}"; exit 2; }
+PROD=${PROD:-auau}
+case $PROD in
+  auau) PROD_W=; PROD_SCRIPT=run_prod_jet.py; DEF_J=8; DEF_OMP=4 ;;
+  oo)   PROD_W=/opt/X-SCAPE/external_packages/js-contrib/contribs/PyJetscape/example/prod_OO_isr
+        PROD_SCRIPT=run_prod_oo_isr.py; DEF_J=8; DEF_OMP=3
+        export MUSIC_CUDA_SYNC=${MUSIC_CUDA_SYNC:-block} ;;
+  *)    echo "PROD must be auau or oo, got '$PROD'" >&2; exit 2 ;;
+esac
 REMOTE=; upargs=(); MINFREE=50G; LBTCACHE=; STAGGER=
 while [ $# -gt 0 ]; do
   case $1 in
@@ -84,10 +93,12 @@ done
 [ ${#upargs[@]} -eq 0 ] || [ -n "$REMOTE" ] || { echo "--delete/--keep-free/--verify-every need --upload" >&2; exit 2; }
 case $STAGGER in ''|[0-9]|[0-9][0-9]|[0-9][0-9][0-9]) ;;
   *) echo "--stagger needs whole seconds, got '$STAGGER'" >&2; exit 2 ;; esac
+[ -z "$LBTCACHE" ] || [ "$PROD" = auau ] ||
+  { echo "--lbt-cache: prod_OO_isr runs no LBT (Matter only)" >&2; exit 2; }
 [ $# -ge 2 ] || usage
 NJOBS=$1; EVENTS=$2; SEED0=${3:-0}; OUTBASE=${4:-/work/out}
 shift $(( $# < 4 ? $# : 4 ))
-J=${JOBS_PER_GPU:-8}; OMP=${OMP_THREADS:-4}
+J=${JOBS_PER_GPU:-$DEF_J}; OMP=${OMP_THREADS:-$DEF_OMP}
 IMAGE=${IMAGE:-jhputschke/xscape-prod:cu124}
 WORKDIR=${WORKDIR:-$HOME/prod_test}
 mounts=(-v "$WORKDIR:/work")
@@ -140,6 +151,11 @@ if [ -n "$REMOTE" ]; then              # check the upload can work before starti
   rm -f "$HOST_OUTBASE/.upload_final"
 fi
 
+if [ -n "$PROD_W" ] && ! docker run --rm --entrypoint test "$IMAGE" -f "$PROD_W/$PROD_SCRIPT"; then
+  echo "$IMAGE has no $PROD_W/$PROD_SCRIPT (needs js-contrib 8765281 or later," \
+       "e.g. xscape-prod:cu124-20261011-84df104)" >&2
+  exit 1
+fi
 if [ -n "$STAGGER" ] && ! docker run --rm --entrypoint grep "$IMAGE" -q -e '--stagger)' \
        ../prod_AuAu_0_10/run_jobs.sh; then
   echo "--stagger: run_jobs.sh in $IMAGE has no --stagger (needs js-contrib 64e39ba or later)" >&2
@@ -159,6 +175,7 @@ if [ -n "$LBT_H" ] && [ ! -s "$LBT_H" ]; then  # make the cache once, before the
   echo "LBT table cache written: $LBT_H ($(stat -c %s "$LBT_H") bytes)"
 fi
 jobenv=(); [ -n "$LBT_C" ] && jobenv+=(-e "LBT_TABLE_CACHE=$LBT_C")
+[ -n "$PROD_W" ] && jobenv+=(-w "$PROD_W")      # run_jobs.sh of that production
 rjopts=(); [ -n "$STAGGER" ] && rjopts+=(--stagger "$STAGGER")
 
 N0=$(( (NJOBS + 1) / 2 )); N1=$(( NJOBS - N0 ))
