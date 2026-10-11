@@ -3,6 +3,7 @@
 `launch_2gpu.sh` runs `prod_AuAu_0_10_jet` from the production image (default
 `jhputschke/xscape-prod:cu124`) on both GPUs of one machine with Docker, and can upload the
 finished jobs to the OSDF while it runs ([`upload_follow.py`](#uploading-to-the-osdf-fno4hic)).
+[`launch_2gpu_oo.sh`](#oo-launch_2gpu_oosh) does the same for `prod_OO_isr` (O+O with ISR).
 It was written for, and all numbers below were measured on, a workstation with **2 × RTX 3090
 (24 GB), 24 cores, 125 GB RAM** and a second disk at `/data` (2026-10-05; the measurements are in
 [docs/BENCHMARK_2x3090.md](../docs/BENCHMARK_2x3090.md)). On other machines adjust `JOBS_PER_GPU`, `OMP_THREADS`,
@@ -12,12 +13,14 @@ It was written for, and all numbers below were measured on, a workstation with *
 - in each, `run_jobs.sh -j 8 --mps`: **8 jobs per GPU**, kernels shared through CUDA MPS;
 - `OMP_NUM_THREADS=4`, `OMP_WAIT_POLICY=passive` per job.
 
-> **Image.** The default `cu124` is `cu124-20261003-cbc7263` until the production images are
-> rebuilt ([`docs/README_2stage.md`](../docs/README_2stage.md) §1): it has the memory fixes but
-> writes the earlier 65 × 65 × 33 output grid and has no edge flag. For a campaign, pin a
-> dated tag (`IMAGE=jhputschke/xscape-prod:cu124-20261003-cbc7263`), and for the new
-> 64 × 64 × 32 grid pass `--grid` with the YAML from a checkout under `WORKDIR`
-> (e.g. `--grid /work/grid_fno.yaml`). The memory and disk numbers below are for the earlier grid.
+> **Image.** Since 2026-10-11 the default `cu124` is `cu124-20261011-84df104`: X-SCAPE
+> `84df104`, MUSIC4GPU `bc8543a`, js-contrib `8765281`. It has everything below:
+> - the memory fixes, `LBT_TABLE_CACHE`, `run_jobs.sh --stagger` and `MUSIC_CUDA_SYNC`;
+> - the 64 × 64 × 32 output grid and the edge flag;
+> - `prod_OO_isr`.
+>
+> For a campaign, pin the dated tag (`IMAGE=jhputschke/xscape-prod:cu124-20261011-84df104`).
+> The Au+Au memory and disk numbers below were measured with earlier images (named in each section).
 
 ## Campaign default (2 × RTX 3090)
 
@@ -85,6 +88,55 @@ settings matter:
 - Before these changes (image `cu124-cuda-sync-test`), 8 jobs/GPU with particlize peaked at
   ~111 GB (the jobs' first-event peaks coincide); with them, 92 GB. In a first long campaign
   at 10/GPU watch `free -g`; if the peak goes above ~112 GB, use `JOBS_PER_GPU=9`.
+
+## O+O (`launch_2gpu_oo.sh`)
+
+`launch_2gpu_oo.sh` runs `prod_OO_isr` (O+O 200 GeV with ISR and Matter, see its
+[README](../contribs/PyJetscape/example/prod_OO_isr/README.md)) the same way.
+- It is `launch_2gpu.sh` with `PROD=oo`: the same launcher options, OUTBASE, seeds, resume, upload and disk guard. The options after OUTBASE go to `run_prod_oo_isr.py`.
+- Defaults: **8 jobs per GPU, `OMP_THREADS=3`, `MUSIC_CUDA_SYNC=block`**. The jobs run in the image's `prod_OO_isr` folder.
+- It needs an image with `prod_OO_isr`: `cu124` from 2026-10-11 on. An older image is refused.
+- `--lbt-cache` is refused: there is no LBT in this chain.
+
+```bash
+cd js-contrib/utils
+./launch_2gpu_oo.sh 16 15 1 /work/oo_test --bulk-hadrons 10 --no-particlize --no-hydro-file
+                                     # test: 16 jobs x 15 events, hadrons only, ~5 min
+nohup ./launch_2gpu_oo.sh 64 100 0 /data/OO_had --campaign had1 \
+    --bulk-hadrons 100 --no-particlize --no-hydro-file > /data/OO_had.log 2>&1 &
+                                     # hadrons only: 6,400 events, ~2 h
+nohup ./launch_2gpu_oo.sh --upload OO_c1 --delete all --min-free 100G 64 100 0 /data/OO_c1 \
+    --campaign c1 > /data/OO_c1.log 2>&1 &
+                                     # default outputs, uploaded while running
+```
+
+Measured on 2 × RTX 3090 (2026-10-11):
+- image `cu124-20261011-84df104`, one wave of 15 events per job, hadrons only (`--bulk-hadrons 10 --no-particlize --no-hydro-file`);
+- `MUSIC_CUDA_SYNC=block`, MPS.
+
+| jobs/GPU | OMP | events/h (makespan) | s/event in a job | core-s/event | GPU busy | host memory peak |
+|---|---|---|---|---|---|---|
+| **8** | **3** | **3,505** | 15.5 | 21.6 | 61 % | **37 GB** |
+| 12 | 2 | 3,510 | 23.5 | 29.0 | 64 % | 52 GB |
+| 16 | 1 | 3,534 | 31.4 | 29.5 | 65 % | 67 GB |
+| 20 | 1 | 3,507 | 39.6 | 37.8 | 66 % | 83 GB |
+| 12, default outputs | 2 | 3,657 | 22.8 | 25.7 | 66 % | 51 GB |
+
+- **Throughput:** ~3,500 events/h at every setting, ~4.4× the Au+Au campaign (805 events/h).
+- **The limit is the host, not the GPUs or memory:**
+  - 8 jobs on one GPU alone give 2,506 events/h; with the other GPU's 8 jobs running too, 1,750 per GPU.
+  - Each event of a job alone is ~8 s, of which ~1.4 s GPU kernels. The rest is host work: MUSIC's freeze-out, its GPU → host copies for Matter, and a diagnostic it writes 4× per event.
+  - More jobs per GPU only slow every job and cost more CPU, so 8/GPU is the default.
+- **Disk per event:**
+
+  | output | MB/event | per hour | per day |
+  |---|---|---|---|
+  | default outputs | ~29: hydro 18.9, particlize 10.5 | ~105 GB | ~2.5 TB |
+  | hadrons only, 10 oversamples | ~0.15 | ~0.5 GB | ~13 GB |
+  | hadrons only, 100 oversamples | roughly 1.3 (estimate) | ~5 GB | ~120 GB |
+
+  With the default outputs, use `--upload … --delete all` (or `pair`) and `--min-free`.
+- **`--upload`:** the hadron files (`_hadrons_bulk_bg.h5`, `_hadrons_jet_frag.h5`) are uploaded with the job and never deleted. `--delete pair` deletes `<stem>.h5`, here the hydro evolution. A job with skipped events (`events_skipped`, see the O+O README) counts as finished.
 
 ## Usage
 
