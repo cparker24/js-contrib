@@ -82,6 +82,10 @@ GUN_ID = "PythiaGun"          # PythiaIsrGun takes its id from <Hard><PythiaGun>
 #: 3dMCGlauber's per-event record in the working directory (EventGenerator::
 #: generate_strings rewrites it every event): event_id Npart Ncoll Nstrings b
 GLAUBER_SUMMARY = "events_summary.dat"
+#: its strings of the event (MCGlauberGenString always writes event id 0); the header
+#: line has the strings' total energy and net pz
+GLAUBER_STRINGS = "strings_event_0.dat"
+IS_ID = "MCGlauber"
 
 
 def parse_args() -> argparse.Namespace:
@@ -202,6 +206,10 @@ def job_xml(a, out_h5: str):
     else:
         if _text(mcg, "generateOnlyPositions") != "1":
             problems.append("need <IS><MCGlauber><generateOnlyPositions>1 (ISR)")
+        if _text(mcg, "Subtract_hard_momentum") != "1":
+            problems.append("need <IS><MCGlauber><Subtract_hard_momentum>1: with 0 the hard "
+                            "partons' momentum stays in the strings and the hard pair's "
+                            "remnants make strings and jet hadrons, so energy counts twice")
         for tag, v in (("sqrts", a.sqrts), ("b_min", a.b_min), ("b_max", a.b_max)):
             if v is not None:
                 _set(mcg, tag, f"{v:g}")
@@ -292,6 +300,50 @@ def hadron_selection(a) -> dict:
     keep = {"p": a.keep_bits_p, "x": a.keep_bits_x}
     return {"keep_bits": keep if any(v is not None for v in keep.values()) else None,
             "eta_max": a.eta_max, "charged_only": a.charged, "positions": not a.no_x}
+
+
+def strings_record() -> dict:
+    """This event's strings as MUSIC takes them: their energy and pz [GeV], strings plus
+    remnant ends, MUSIC's sum (hydro_source_strings.cpp: m [cosh y_i - cosh y] per end
+    plus remnant m cosh y), from 3dMCGlauber's strings file.  (Its header's total_energy
+    is Npart sqrt(s)/2 by construction, before any subtraction.)"""
+    import numpy as np
+    try:
+        with open(GLAUBER_STRINGS) as fh:
+            fh.readline()
+            cols = fh.readline().lstrip("#").split()
+            rows = np.loadtxt(fh, ndmin=2)
+        # exact header tokens: rapidities have no unit ("y_l"), positions do ("y_l[fm]")
+        idx = {c: k for k, c in enumerate(cols)}
+        m, yl, yr = rows[:, idx["mass[GeV]"]], rows[:, idx["y_l"]], rows[:, idx["y_r"]]
+        yli, yri = rows[:, idx["y_l_i"]], rows[:, idx["y_r_i"]]
+        rl, rr = rows[:, idx["remnant_l"]], rows[:, idx["remnant_r"]]
+        e = m * (np.cosh(yli) + np.cosh(yri) - np.cosh(yl) - np.cosh(yr)) \
+            + rl * m * np.cosh(yl) + rr * m * np.cosh(yr)
+        pz = m * (np.sinh(yli) + np.sinh(yri) - np.sinh(yl) - np.sinh(yr)) \
+            + rl * m * np.sinh(yl) + rr * m * np.sinh(yr)
+        return {"strings_E_total": float(e.sum()), "strings_pz_net": float(pz.sum())}
+    except (OSError, ValueError, KeyError, IndexError):
+        return {}
+
+
+def isr_record(core, ini) -> dict:
+    """What the hard process took from the colliding nucleons this event: the hard-parton
+    four-momentum handed over for subtraction (projectile +z, target -z), and the four-
+    momenta of the two nucleons' remnants (to the jet hadronization)."""
+    if ini is None or not hasattr(core, "isr_hard_momentum"):
+        return {}
+    r = core.isr_hard_momentum(ini)
+    out = {}
+    for side in ("proj", "targ"):
+        for name, v in zip(("E", "px", "py", "pz"), r[side] or []):
+            out[f"isr_sub_{name}_{side}"] = float(v)
+        rem = r[f"remnant_{side}"] or []
+        if len(rem) == 4:
+            out[f"remnant_E_{side}"], out[f"remnant_pz_{side}"] = float(rem[0]), float(rem[3])
+    if "isr_sub_E_proj" in out and "isr_sub_E_targ" in out:
+        out["isr_sub_E_total"] = out["isr_sub_E_proj"] + out["isr_sub_E_targ"]
+    return out
 
 
 def glauber_record() -> dict:
@@ -401,6 +453,7 @@ def main() -> int:
                               "(<stem>_hadrons_bulk_bg.h5)" if out_bulk else
                               "none in the job (hadronize.py on the particlize file)",
         "T_fo": float(_text(root, "Hydro/MUSIC/freezeout_temperature") or 0.15),
+        "subtract_hard_momentum": 1,
     }
 
     # MUSIC / 3dMCGlauber resolve their input files relative to the working directory:
@@ -427,6 +480,16 @@ def main() -> int:
         sys.exit("run_prod_oo_isr.py: the hard process has no IsrManager: this X-SCAPE "
                  "does not build the ISR chain from <Hard><ISR>")
     mgr = core.JetScapeSignalManager.Instance().GetJetEnergyLossManagerPointer()
+    ini = tasks.get(IS_ID)
+    if ini is not None and hasattr(core, "isr_hard_momentum"):
+        sub = core.isr_hard_momentum(ini)["subtract"]
+        if sub != 1:
+            sys.exit(f"run_prod_oo_isr.py: {IS_ID} runs Subtract_hard_momentum = {sub}, not 1")
+        print("  ISR      the hard partons' momentum is subtracted from the colliding "
+              "nucleons; recorded per event (isr_sub_*, remnant_*, strings_*)")
+    else:
+        print("  ISR      this build cannot report the subtracted momentum "
+              "(PyJetscape without isr_hard_momentum)", file=sys.stderr)
     windows = None
     if getattr(core, "PYTHIA_ISR_GUN_HAS_PTHAT_BINS", False):
         windows = core.pythia_gun_bins(gun)
@@ -512,7 +575,8 @@ def main() -> int:
             h = core.hard_process_info(gun)
             ev = {"pthat": float(h["pthat"]), "sigma_gen": float(h["sigma_gen"]),
                   "sigma_err": float(h["sigma_err"]),
-                  "event_weight": float(h["event_weight"]), **glauber_record()}
+                  "event_weight": float(h["event_weight"]), **glauber_record(),
+                  **strings_record(), **isr_record(core, ini)}
             if a.pthat_windows:
                 ev["pthat_bin"] = int(core.pythia_gun_bins(gun)["active"])
             b = hydro.get_bulk_info()

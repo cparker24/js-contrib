@@ -30,10 +30,12 @@ the automatic task list to it.
 > **Tuned O+O parameters.** The 3dMCGlauber and MUSIC settings in
 > `OO_MCGlauber_MUSIC_isr.xml` are the tuned O+O set of X-SCAPE's
 > `config/BulkFastTest/OO_one_event.xml` (O16 configurations from `nucleusConfigs`,
-> `tau_form_mean` 0.5, MUSIC's viscosities and freeze-out), tuned at √s_NN = 200 GeV. Three
-> settings differ on purpose: EOS 9 instead of 91 (as the Au+Au production: with 91 iSS
-> leaves the resonances undecayed, see [Physics notes](#physics-notes-and-limits)),
-> `generateOnlyPositions` 1 (the strings are made after the ISR) and b ≤ 3 fm.
+> `tau_form_mean` 0.5, MUSIC's viscosities and freeze-out), tuned at √s_NN = 200 GeV. Four
+> settings differ on purpose (see [Physics notes](#physics-notes-and-limits)): EOS 9 instead
+> of 91 (as the Au+Au production: with 91 iSS leaves the resonances undecayed),
+> `Subtract_hard_momentum` 1 instead of 0 (with ISR the hard partons' momentum must come out
+> of the strings), `generateOnlyPositions` 1 (the strings are made after the ISR) and
+> b ≤ 3 fm.
 
 | file | purpose |
 |---|---|
@@ -209,7 +211,8 @@ collisions.
 
 Good to know:
 - **In the job and afterwards agree.** Both run iSS with `hadronize.xml`'s settings; only
-  the seeds differ. In a 3-event test with 50 oversamples each, dN/dη at |η| < 0.5 per event
+  the seeds differ. In a 3-event test with 50 oversamples each (made before the subtraction
+  was switched on, see *Physics notes*), dN/dη at |η| < 0.5 per event
   was 32.0 / 37.9 / 32.1 in the job and 32.0 / 36.8 / 31.2 from `hadronize.py`; ⟨pT⟩, the
   charged fraction and the π⁺, K⁺, p yields agree as well. The in-job file has the attribute
   `inline`, and each unit its iSS `seed`, `n_cells` and `hydro_row`.
@@ -233,7 +236,8 @@ Each job writes, next to each other (stem `OO_isr_seedNNNN`, or `OO_isr_<campaig
 
 | file | content | written by |
 |---|---|---|
-| `<stem>.h5` | MUSIC's evolution (e, vx, vy, vz) on `grid_oo.yaml`, read from the framework copy Matter also reads; `diag/` per event: `event`, `pthat`, `sigma_gen`, `sigma_err`, `event_weight`, `glauber_npart`, `glauber_ncoll`, `glauber_nstrings`, `glauber_b`, `tau0_music`, `hit_grid_boundary` (`--no-hydro-file`: not written) | `jetscape.fast_h5_bulk.H5BulkWriter` (`grid_mode="framework"`) |
+| `<stem>.h5` | MUSIC's evolution (e, vx, vy, vz) on `grid_oo.yaml`, read from the framework copy Matter also reads; `diag/` per event: `event`, `pthat`, `sigma_gen`, `sigma_err`, `event_weight`, `glauber_npart`, `glauber_ncoll`, `glauber_nstrings`, `glauber_b`, `tau0_music`, `has_medium`, `hit_grid_boundary`, the ISR energy bookkeeping
+`isr_sub_*`, `remnant_*`, `strings_*` (see *Physics notes*) (`--no-hydro-file`: not written) | `jetscape.fast_h5_bulk.H5BulkWriter` (`grid_mode="framework"`) |
 | `<stem>_particlize.h5` | MUSIC's freeze-out surface (`surface/bg`, one unit per event), the final partons (`partons/`) and the shower initiators; `events/` as `diag/` plus `hydro_row`, `wall_s` (`--no-particlize`: not written) | `jetscape.particlize_h5.ParticlizeH5Writer` (`legs=("bg",)`) |
 | `<stem>_hadrons_bulk_bg.h5` | the bulk hadrons: in the job with `--bulk-hadrons N`, else later from `hadronize.py` | `jetscape.hadrons_h5.HadronH5Writer` |
 | `<stem>_hadrons_jet_frag.h5` | the jet hadrons of iColoredHadronization, one unit per event, with the initiators | `jetscape.hadrons_h5.HadronH5Writer`, in the job |
@@ -278,7 +282,8 @@ events, CUDA MPS, `OMP_NUM_THREADS` = 20 cores / j (2026-10-10, GB10: 20 cores, 
 
 - **EOS 9, not BulkFastTest's 91.** With EOS 91 iSS samples the SMASH hadron list and
   leaves the resonance decays to SMASH, which neither the job nor `hadronize.py` runs: ρ, ω,
-  K*, Δ, η ... would stay undecayed (`hadronize.py` warns). In a 3-event test the midrapidity
+  K*, Δ, η ... would stay undecayed (`hadronize.py` warns). In a 3-event test (before the
+  subtraction was switched on) the midrapidity
   dN/dη was 15.5 per sample with EOS 91 against 34.8, all decayed, with EOS 9. EOS 9 (UrQMD
   list) is also what the Au+Au productions run.
 - **One hard scattering per event**, at a binary collision of 3dMCGlauber drawn uniformly.
@@ -286,10 +291,24 @@ events, CUDA MPS, `OMP_NUM_THREADS` = 20 cores / j (2026-10-10, GB10: 20 cores, 
   `glauber_ncoll` is recorded per event for that. `b` selects the centrality
   (`cenMin`/`cenMax` act only in the standalone 3dMCGlauber); `b < 3 fm` is about 0–20% of
   the O+O cross section.
+- **The hard partons' momentum is taken from the colliding nucleons**
+  (`<Subtract_hard_momentum>1`, the X-SCAPE default; the BulkFastTest O+O example, without
+  ISR, has 0). The hard pair's valence quark gives up the momentum the ISR hands over, and
+  its remnants go to the jet hadronization instead of making strings. With 0 3dMCGlauber
+  zeroes that momentum first: the strings keep the full Npart √s/2 although the hard partons
+  and the remnants are hadronized too, so 6-12% of the event's energy counted twice (in the
+  5-event test below; earlier O+O files of this production had 0). X-SCAPE now warns about 0 with ISR, and
+  `run_prod_oo_isr.py` refuses it. **Recorded per event** (`diag/`, `events/`):
+  `isr_sub_{E,px,py,pz}_{proj,targ}` and `isr_sub_E_total` (handed over for subtraction from
+  the projectile, +z, and target, -z, nucleon), `remnant_E_{proj,targ}` and
+  `remnant_pz_{proj,targ}` (the two nucleons' remnants, to the jet hadronization), and
+  `strings_E_total`, `strings_pz_net` (the strings and remnant ends MUSIC deposits, its own
+  sum). Per event, exactly: `strings_E_total + isr_sub_E_total + remnant_E_proj +
+  remnant_E_targ = Npart √s/2` (5-event test: 1855.7 + 89.7 + 54.6 = 2000.0 GeV for
+  Npart 20; the subtracted energy was 66-136 GeV, the remnants 24-55 GeV).
 - **The hard nucleon pair makes strings only if it is not yet connected**
-  (`Glauber::decide_produce_string_num`), and its valence quarks and remnant lose the hard
-  partons' momentum. Peripheral events can end up with no string at all (`hydro_row` -1);
-  in p+p this is most events (9 of 12 in a test).
+  (`Glauber::decide_produce_string_num`). Peripheral events can end up with no string at all
+  (`hydro_row` -1); in p+p this is most events (9 of 12 in a test).
 - **Jet energy loss is Matter alone.** LBT gives its partons no colour, which iColored
   hadronization cannot take: Matter + LBT stops with "Unpaired colors sent to Pythia"
   (tested). `run_prod_oo_isr.py` refuses `<Eloss><Lbt>` unless `--no-jet-hadrons`. Colorless

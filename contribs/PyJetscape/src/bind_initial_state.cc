@@ -7,11 +7,17 @@
  *   - get_entropy_density_numpy() → 2D numpy array (nx, ny) for boost-invariant
  *   - GetNumOfBinaryCollisions() → flat std::vector<double>
  *   - Event-level quantities (GetNpart, GetNcoll, GetTotalEntropy, …)
+ *   - isr_hard_momentum(task): with initial-state radiation, the hard-parton
+ *     momentum handed to the initial state for subtraction this event, the
+ *     subtraction setting and the hard nucleons' remnants (3dMCGlauber)
  ******************************************************************************/
 
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
 #include <pybind11/stl.h>
+
+#include <stdexcept>
+#include <string>
 
 #include "InitialState.h"
 #include "JetScapeModuleBase.h"
@@ -256,4 +262,34 @@ void bind_initial_state(py::module_ &m) {
                  ``arr[iy, ix]`` maps to index ``iy * nx + ix``.
            )pbdoc",
            py::arg("arr"));
+
+  // ── ISR: what the hard process takes from the initial state ───────────────
+  // A free function on a task: GetTaskList() hands out JetScapeTask pointers whose
+  // dynamic type (MCGlauberWrapper) is not registered with pybind11.
+  m.def(
+      "isr_hard_momentum",
+      [](std::shared_ptr<JetScapeTask> task) {
+        auto ini = std::dynamic_pointer_cast<InitialState>(task);
+        if (!ini)
+          throw std::invalid_argument("not an InitialState module: " +
+                                      (task ? task->GetId() : std::string("None")));
+        py::dict d;
+        d["proj"] = ini->GetHardPartonMomentumProj();     // E, px, py, pz [GeV]
+        d["targ"] = ini->GetHardPartonMomentumTarg();
+        d["subtract"] = ini->GetSubtractHardMomentum();   // 1, 0; -1: no such setting
+        d["remnant_proj"] = ini->Get_remnant_proj();      // E, px, py, pz [GeV]
+        d["remnant_targ"] = ini->Get_remnant_targ();
+        return d;
+      },
+      R"pbdoc(
+        With initial-state radiation (PythiaIsrGun + iMATTER + 3dMCGlauber): this
+        event's hard-parton four-momentum (E, px, py, pz) [GeV] handed to the initial
+        state for subtraction from the projectile (``proj``, +z) and target (``targ``,
+        -z) nucleon of the hard collision; ``subtract`` (1: subtracted, 0: 3dMCGlauber
+        zeroes it first, -1: no such setting); and the four-momenta of those two
+        nucleons' remnants (``remnant_proj``, ``remnant_targ``), which
+        iColoredHadronization hadronizes.  Empty lists from a module without them.
+        Call between ExecPerEvent() and ClearPerEvent().
+      )pbdoc",
+      py::arg("task"));
 }
