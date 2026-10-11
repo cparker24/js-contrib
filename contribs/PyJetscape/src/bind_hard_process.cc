@@ -8,6 +8,9 @@
  *   pythia_gun_bins(task)     PythiaGun's pTHat windows (<pTHatBins>): the bins,
  *                             the current event's window, and per window the
  *                             Pythia seed, sigma_gen, sigma_err, n_accepted
+ *   PYTHIA_ISR_GUN_HAS_PARTON_Y_CUT  True if PythiaIsrGun has <partonYMax> (both | any,
+ *                             on the two outgoing hard partons); pythia_gun_bins then
+ *                             gives the same cut fields as for PythiaGun
  *   PYTHIA_ISR_GUN_HAS_PTHAT_BINS  True if X-SCAPE's PythiaIsrGun (the ISR hard
  *                             process) has <pTHatBins>; pythia_gun_bins then takes it too
  *   PYTHIA_GUN_HAS_PTHAT_BINS True if X-SCAPE's PythiaGun has <pTHatBins>. An older
@@ -71,6 +74,11 @@ void bind_hard_process(py::module_ &m) {
 #else
   m.attr("PYTHIA_ISR_GUN_HAS_PTHAT_BINS") = false;
 #endif
+#ifdef PYTHIAISRGUN_HAS_PARTON_Y_CUT
+  m.attr("PYTHIA_ISR_GUN_HAS_PARTON_Y_CUT") = true;
+#else
+  m.attr("PYTHIA_ISR_GUN_HAS_PARTON_Y_CUT") = false;
+#endif
 
   m.def(
       "hard_process_info",
@@ -96,7 +104,7 @@ void bind_hard_process(py::module_ &m) {
       [](std::shared_ptr<JetScapeTask> task) {
         auto gun = std::dynamic_pointer_cast<PythiaGun>(task);
 #ifdef PYTHIAISRGUN_HAS_PTHAT_BINS
-        // the ISR hard process: the same windows, no rapidity cut
+        // the ISR hard process: the same windows (and <partonYMax> if it has it)
         if (auto isr = std::dynamic_pointer_cast<PythiaIsrGun>(task)) {
           const int n = isr->GetNPtHatBins();
           py::list bins, seeds, sigma, err, acc;
@@ -115,7 +123,25 @@ void bind_hard_process(py::module_ &m) {
           d["sigma_gen"] = sigma;
           d["sigma_err"] = err;
           d["n_accepted"] = acc;
-          d["y_max"] = 0.0;                        // no rapidity cut in PythiaIsrGun
+#ifdef PYTHIAISRGUN_HAS_PARTON_Y_CUT
+          py::list tried, kept, accept, raw, raw_err;
+          for (int k = 0; k < n; ++k) {
+            tried.append(isr->GetNYTried(k));
+            kept.append(isr->GetNYKept(k));
+            accept.append(isr->GetYAcceptance(k));
+            raw.append(isr->GetSigmaGenRaw(k));
+            raw_err.append(isr->GetSigmaErrRaw(k));
+          }
+          d["y_max"] = isr->GetPartonYMax();       // 0: no cut
+          d["y_mode"] = isr->GetPartonYMode();
+          d["n_tried"] = tried;
+          d["n_kept"] = kept;
+          d["acceptance"] = accept;
+          d["sigma_gen_raw"] = raw;
+          d["sigma_err_raw"] = raw_err;
+#else
+          d["y_max"] = 0.0;                        // no rapidity cut in this PythiaIsrGun
+#endif
           d["isr"] = true;
           return d;
         }
