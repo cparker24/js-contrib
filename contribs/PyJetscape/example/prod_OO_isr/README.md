@@ -43,6 +43,7 @@ the automatic task list to it.
 | `grid_oo.yaml` | output grid of the hydro file: 64 × 64 × 32 at 0.3125 fm × 0.3125 fm × 0.3125 (x, y ±9.84 fm) |
 | `run_prod_oo_isr.py` | one job: one seed, N events |
 | `run_jobs.sh` | many jobs, `-j P` at a time, resumable (wraps `../prod_AuAu_0_10/run_jobs.sh`) |
+| `hard_sub_compare/` | two campaigns with and without the hard-momentum subtraction, and a notebook comparing their hadrons ([README](hard_sub_compare/README.md)) |
 | `oo_isr_overview.ipynb` | one job's output: the medium's energy density at three τ (with the freeze-out contour and the dijet), and η, φ, pT and Δφ-to-the-leading-parton distributions of the bulk and jet hadrons |
 
 ## Run
@@ -58,6 +59,8 @@ python run_prod_oo_isr.py --events 10 --seed 1 --b-max 5    # more peripheral
 python run_prod_oo_isr.py --events 10 --seed 1 --sqrts 5360 # LHC energy (tuned at 200 GeV)
 python run_prod_oo_isr.py --events 30 --seed 1 --pthat-bins 10-20,20-40,40-60
                                                             # 3 pTHat windows, every event complete
+python run_prod_oo_isr.py --events 30 --seed 1 --pthat-bins 10-20,20-30,30-40 --parton-ymax 0.6
+                                                            # both hard partons at |y| < 0.6
 
 ./run_jobs.sh 20 25 0                                       # 20 jobs x 25 events, unique seeds -> ./out
 ./run_jobs.sh -j 2 20 25 1 out_had --bulk-hadrons 100 --no-particlize
@@ -95,6 +98,19 @@ background is shared between the windows. Per event `pthat_bin` is recorded (`di
 `events/`); per window the file attributes `pthat_bins`, `pthat_bin_sigma_gen`,
 `pthat_bin_sigma_err`, `pthat_bin_n_accepted`, `pthat_bin_seeds` (and the `.json`) give the
 cross sections for weighting. Use a multiple of K events for the same number per window.
+
+**Rapidity cut on the hard partons: `--parton-ymax Y`** (`--parton-y-mode both`, the
+default, or `any`). PythiaIsrGun regenerates the event until the two outgoing partons of the
+hard scattering (Pythia's 2→2, before the ISR) have |y| < Y (both, or either), before
+anything else runs. Their pT is equal at that stage, so there is no `leading` mode as in the
+Au+Au driver. The cross sections are Pythia's × the acceptance kept/tried per window: the
+file attributes and the `.json` give `pthat_bin_sigma_gen` (corrected),
+`pthat_bin_acceptance`, `pthat_bin_n_tried`, `pthat_bin_n_kept` and Pythia's own
+`pthat_bin_sigma_gen_raw`. Per event `parton_y_lead`, `parton_pt_lead`, `parton_y_sub`,
+`parton_pt_sub` are the two hardest partons the hard process holds after the ISR (iMATTER
+changes their momenta, so |y| can exceed Y slightly). At 200 GeV with Y = 0.6 (both) the
+acceptance is 0.14, 0.30 and 0.49 in the 10–20, 20–30 and 30–40 GeV windows; this costs no
+hydro time. Needs X-SCAPE's PythiaIsrGun with `<partonYMax>` (branch `oo_hard_sub_compare`).
 
 The seeds, campaign names, the seed registry and the working directories are those of the
 Au+Au productions: see [`../prod_AuAu_0_10_jet/README.md`](../prod_AuAu_0_10_jet/README.md)
@@ -243,6 +259,9 @@ Each job writes, next to each other (stem `OO_isr_seedNNNN`, or `OO_isr_<campaig
 | `<stem>_hadrons_jet_frag.h5` | the jet hadrons of iColoredHadronization, one unit per event, with the initiators | `jetscape.hadrons_h5.HadronH5Writer`, in the job |
 | `<stem>.xml`, `.json` | the job XML; a summary (events, cross section, outputs, wall time) | |
 
+- **The hadron files' `units/`** carry the event's whole record (as `diag/`: pTHat, window,
+  Npart, `isr_sub_*`, `remnant_*`, `strings_*`, the hard partons), so hadron-only jobs
+  (`--no-hydro-file --no-particlize`) keep it.
 - **`hydro_row`** links the files: the row of the event in `<stem>.h5`, or -1 when it has
   none: for an event without a medium, and for every event with `--no-hydro-file`.
   **`has_medium`** (1/0, in `diag/`, `events/` and the hadron files' `units/`) says which:

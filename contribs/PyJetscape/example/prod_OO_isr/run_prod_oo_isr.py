@@ -31,6 +31,8 @@ One call = one job = one seed.  Each job writes, next to each other:
     python run_prod_oo_isr.py --events 5 --seed 1 --b-max 5
     python run_prod_oo_isr.py --events 30 --seed 1 --pthat-bins 10-20,20-40,40-60
                                      # event i in window i mod 3, every event complete
+    python run_prod_oo_isr.py --events 30 --seed 1 --pthat-bins 10-20,20-30,30-40 \
+                              --parton-ymax 0.6       # both hard partons at |y| < 0.6
     python run_prod_oo_isr.py --events 5 --seed 1 --bulk-hadrons 100 --no-particlize
                                      # all hadrons in the job, no surface file
     python run_prod_oo_isr.py --events 1 --seed 1 --dry-run       # check the XML/grid only
@@ -116,6 +118,18 @@ def parse_args() -> argparse.Namespace:
                         "is complete (ISR, strings, MUSIC, Matter): no hydro reuse. Records "
                         "the window per event and each window's cross section. Use a "
                         "multiple of K events for the same number per window")
+    p.add_argument("--parton-ymax", type=float, default=None, dest="parton_ymax",
+                   help="keep only events whose two outgoing hard partons (Pythia's 2->2, "
+                        "before the ISR) pass |y| < YMAX (see --parton-y-mode). Rejected "
+                        "events are regenerated before anything else runs; the cross "
+                        "sections are Pythia's x kept/tried per window. Records the "
+                        "acceptance, and the two hardest partons' y and pT per event. Needs "
+                        "X-SCAPE's PythiaIsrGun with <partonYMax>")
+    p.add_argument("--parton-y-mode", choices=("both", "any"), default="both",
+                   dest="parton_y_mode",
+                   help="with --parton-ymax: 'both' hard partons (default) or 'any' of them "
+                        "(their pT is equal before the ISR: no 'leading' as in the Au+Au "
+                        "driver)")
     p.add_argument("--sqrts", type=float, default=None,
                    help="collision energy per nucleon pair [GeV], for 3dMCGlauber and Pythia "
                         "(default: the XML's, 200). The 3dMCGlauber/MUSIC settings are tuned "
@@ -238,6 +252,13 @@ def job_xml(a, out_h5: str):
             _set(pg, "pTHatBins", rj.pthat_bins_text(a.pthat_windows))
         elif pg.find("pTHatBins") is not None:
             pg.remove(pg.find("pTHatBins"))      # a template's windows: only with --pthat-bins
+        if a.parton_ymax is not None:
+            _set(pg, "partonYMax", f"{a.parton_ymax:g}")
+            _set(pg, "partonYMode", a.parton_y_mode)
+        else:
+            for tag in ("partonYMax", "partonYMode"):   # a template's cut: only with the option
+                if pg.find(tag) is not None:
+                    pg.remove(pg.find(tag))
         if len(list(root.find("Hard"))) != 2:
             problems.append("<Hard> takes only <PythiaGun> and <ISR>")
     if root.find("Preequilibrium/NullPreDynamics") is None:
@@ -357,6 +378,20 @@ def isr_record(core, ini) -> dict:
     return out
 
 
+def hard_partons_record(core, gun) -> dict:
+    """The two hardest partons the hard process handed over (by pT; before the ISR the
+    outgoing pair has equal pT, so 'lead' and 'sub' are just the two): y and pT."""
+    if not hasattr(core, "hard_partons_numpy"):
+        return {}
+    hp = core.hard_partons_numpy(gun)        # pid, px, py, pz, E, pT, y; hardest first
+    out = {}
+    if len(hp):
+        out.update(parton_y_lead=float(hp[0, 6]), parton_pt_lead=float(hp[0, 5]))
+    if len(hp) > 1:
+        out.update(parton_y_sub=float(hp[1, 6]), parton_pt_sub=float(hp[1, 5]))
+    return out
+
+
 def glauber_record() -> dict:
     """This event's 3dMCGlauber numbers from events_summary.dat in the working directory."""
     try:
@@ -389,6 +424,8 @@ def main() -> int:
         if any(lo <= 0 for lo, _ in a.pthat_windows):
             sys.exit("run_prod_oo_isr.py: --pthat-bins windows need MIN > 0 (PythiaIsrGun "
                      "runs hard QCD only)")
+    if a.parton_ymax is not None and not a.parton_ymax > 0:
+        sys.exit(f"run_prod_oo_isr.py: --parton-ymax must be > 0, got {a.parton_ymax:g}")
 
     grid, max_ntau, grid_text = rp.load_grid_yaml(a.grid)
     os.makedirs(a.outdir, exist_ok=True)
@@ -420,6 +457,8 @@ def main() -> int:
     else:
         pthat_desc = (f"pTHat {_text(root, 'Hard/PythiaGun/pTHatMin')}-"
                       f"{_text(root, 'Hard/PythiaGun/pTHatMax')} GeV")
+    if a.parton_ymax is not None:
+        pthat_desc += f", hard partons |y| < {a.parton_ymax:g} ({a.parton_y_mode})"
     hard = (f"PythiaIsrGun {pthat_desc}, ISR (iMATTER) to "
             f"-{_text(root, 'Eloss/maxT')} fm/c")
     print(f"prod_OO_isr: {a.events} event(s), seed {a.seed}"
@@ -466,6 +505,8 @@ def main() -> int:
                               "none in the job (hadronize.py on the particlize file)",
         "T_fo": float(_text(root, "Hydro/MUSIC/freezeout_temperature") or 0.15),
         "subtract_hard_momentum": 0 if a.no_subtraction else 1,
+        **({"parton_ymax": a.parton_ymax, "parton_y_mode": a.parton_y_mode}
+           if a.parton_ymax is not None else {}),
     }
 
     # MUSIC / 3dMCGlauber resolve their input files relative to the working directory:
@@ -523,6 +564,16 @@ def main() -> int:
     elif a.pthat_windows:
         sys.exit("run_prod_oo_isr.py: --pthat-bins needs X-SCAPE's PythiaIsrGun with "
                  "<pTHatBins> (branch oo_isr_test) and PyJetscape built against it")
+    if a.parton_ymax is not None:
+        if not getattr(core, "PYTHIA_ISR_GUN_HAS_PARTON_Y_CUT", False):
+            sys.exit("run_prod_oo_isr.py: --parton-ymax needs X-SCAPE's PythiaIsrGun with "
+                     "<partonYMax> (branch oo_hard_sub_compare) and PyJetscape built "
+                     "against it")
+        if (abs(windows["y_max"] - a.parton_ymax) > 1e-12
+                or windows["y_mode"] != a.parton_y_mode):
+            sys.exit(f"run_prod_oo_isr.py: PythiaIsrGun cuts |y| < {windows['y_max']:g} "
+                     f"({windows.get('y_mode')}), not {a.parton_ymax:g} ({a.parton_y_mode})")
+        print(f"  cut      outgoing hard partons, |y| < {a.parton_ymax:g} ({a.parton_y_mode})")
 
     writer = None
     if not a.no_hydro_file:
@@ -597,7 +648,8 @@ def main() -> int:
             ev = {"pthat": float(h["pthat"]), "sigma_gen": float(h["sigma_gen"]),
                   "sigma_err": float(h["sigma_err"]),
                   "event_weight": float(h["event_weight"]), **glauber_record(),
-                  **strings_record(), **isr_record(core, ini)}
+                  **strings_record(), **isr_record(core, ini),
+                  **hard_partons_record(core, gun)}
             if a.pthat_windows:
                 ev["pthat_bin"] = int(core.pythia_gun_bins(gun)["active"])
             b = hydro.get_bulk_info()
@@ -619,8 +671,9 @@ def main() -> int:
                 n_cells = int(len(hydro.surface_to_numpy()))
                 bulk = core.soft_hadrons_numpy(iss) if n_cells else []
                 iss_seed = int(core.soft_last_random_seed(iss))
+                # the event's record (as diag/) in units/ too: hadron-only jobs keep it
                 bwriter.append_unit(bulk, unit=k, event=i, seed=iss_seed, n_cells=n_cells,
-                                    hydro_row=row, has_medium=int(medium))
+                                    hydro_row=row, **ev)
                 bulk_n = len(bulk["pid"]) if n_cells else 0
                 ev["inline_iss_seed_bg"] = iss_seed
             if pwriter is not None:
@@ -630,8 +683,7 @@ def main() -> int:
                 frag = core.hadronization_hadrons_numpy(tasks["HadronizationManager"])
                 frag_n = len(frag["pid"])
                 hwriter.append_unit([frag], initiators=initiators_from_manager(mgr),
-                                    unit=k, event=i, hydro_row=row, has_medium=int(medium),
-                                    pthat=ev["pthat"])
+                                    unit=k, event=i, hydro_row=row, **ev)
             jetscape.ClearPerEvent()
             wall = time.time() - t0
             if pwriter is not None:
@@ -672,6 +724,16 @@ def main() -> int:
                  "pthat_bin_sigma_err": np.asarray(windows["sigma_err"], dtype=np.float64),
                  "pthat_bin_n_accepted": np.asarray(windows["n_accepted"], dtype=np.int64),
                  "pthat_bin_seeds": np.asarray(windows["seeds"], dtype=np.int64)}
+    if a.parton_ymax is not None:
+        # per window; sigma_gen is Pythia's x kept/tried, the raw values count the rejected
+        # events
+        final.update(
+            parton_ymax=a.parton_ymax, parton_y_mode=a.parton_y_mode,
+            pthat_bin_n_tried=np.asarray(windows["n_tried"], dtype=np.int64),
+            pthat_bin_n_kept=np.asarray(windows["n_kept"], dtype=np.int64),
+            pthat_bin_acceptance=np.asarray(windows["acceptance"], dtype=np.float64),
+            pthat_bin_sigma_gen_raw=np.asarray(windows["sigma_gen_raw"], dtype=np.float64),
+            pthat_bin_sigma_err_raw=np.asarray(windows["sigma_err_raw"], dtype=np.float64))
     import h5py
     for path in (None if writer is None or not n_hydro else out_h5, out_particlize, out_frag,
                  out_bulk):
