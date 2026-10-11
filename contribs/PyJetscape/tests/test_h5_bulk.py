@@ -419,6 +419,35 @@ def test_framework_mode_picks_e_vx_vy_vz_and_not_temperature():
     assert not np.allclose(arr[..., 1], arr5[..., 1])
 
 
+class _StubBulkInfoFrames(_StubBulkInfo):
+    """The same, with the frame-by-frame reader of newer builds (EvolutionHistory.frame_numpy)."""
+
+    def get_data_size(self):
+        return self._arr5[..., 0].size
+
+    def frame_numpy(self, k):
+        return self._arr5[k][..., [0, 2, 3, 4]]
+
+    def to_numpy_full(self, n_features=5):
+        raise AssertionError("with frame_numpy the whole event must not be copied")
+
+
+def test_framework_mode_reads_frame_by_frame_with_the_same_values():
+    """frame_numpy (one tau frame at a time) gives what to_numpy_full gives, on any grid."""
+    from jetscape.bulk_sources import event_array
+
+    _, g = make_source(nx=5, ny=4, neta=3, ntau=4)
+    rng = np.random.default_rng(5)
+    arr5 = rng.random((g.ntau, g.nx, g.ny, g.neta, 5)).astype(np.float32)
+    spec = {"dx": g.dx / 2, "dtau": g.dtau / 2}
+    for out_spec in (None, spec):
+        want = event_array(_StubHydro(_StubBulkInfo(arr5, g)), "framework", out_spec=out_spec)
+        got = event_array(_StubHydro(_StubBulkInfoFrames(arr5, g)), "framework",
+                          out_spec=out_spec)
+        assert got[1] == want[1] and got[2] == want[2]
+        np.testing.assert_array_equal(got[0], want[0])
+
+
 # ──────────────────────────── choose_ntau as a cross-file contract (README)
 def test_pinning_choose_ntau_generously_is_free(tmp_path):
     """Over-estimating choose_ntau must cost no disk: the pad chunks are never allocated.

@@ -338,6 +338,13 @@ def event_array(hydro, grid_mode="native", tau_stride=1, out_spec=None):
         raise RuntimeError("no hydro pointer -- add the writer AFTER the hydro module")
 
     if grid_mode == "framework":
+        # One tau frame at a time when the build has frame_numpy (the same floats); the
+        # whole event is resampled below, so it never has to be held.
+        lazy = framework_frames(hydro)
+        if lazy is not None:
+            arr, src = lazy
+            out = resolve_out_grid(src, out_spec)
+            return resample(arr, src, out), src, out
         b = hydro.get_bulk_info()
         # to_numpy_full's layout is [e, temperature, vx, vy, vz]; taking [:4] would
         # silently store temperature as vx.
