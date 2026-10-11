@@ -261,6 +261,14 @@ class H5BulkWriter(JetScapeModuleBase):
     def Clear(self) -> None:
         pass
 
+    def write_diag(self, **scalars) -> None:
+        """Add per-event scalars to ``diag/`` for the event the last :meth:`Exec` wrote
+        (a driver's event record: pTHat, Glauber numbers ...); see
+        ``FnoH5Writer.write_diag``."""
+        if self._w is None or self._i == 0:
+            raise RuntimeError("H5BulkWriter.write_diag: no event written yet")
+        self._w.write_diag(self._i - 1, **scalars)
+
     def Finish(self) -> None:
         """Close the file.  Idempotent; must be called explicitly (see module docstring)."""
         if self._w is None:

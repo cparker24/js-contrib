@@ -8,6 +8,8 @@
  *   pythia_gun_bins(task)     PythiaGun's pTHat windows (<pTHatBins>): the bins,
  *                             the current event's window, and per window the
  *                             Pythia seed, sigma_gen, sigma_err, n_accepted
+ *   PYTHIA_ISR_GUN_HAS_PTHAT_BINS  True if X-SCAPE's PythiaIsrGun (the ISR hard
+ *                             process) has <pTHatBins>; pythia_gun_bins then takes it too
  *   PYTHIA_GUN_HAS_PTHAT_BINS True if X-SCAPE's PythiaGun has <pTHatBins>. An older
  *                             PythiaGun ignores the element and runs pTHatMin-pTHatMax
  *                             only, so a driver that writes it must check this.
@@ -36,6 +38,7 @@
 #include "JetScapeParticles.h"
 #include "JetScapeTask.h"
 #include "PythiaGun.h"
+#include "PythiaIsrGun.h"
 
 namespace py = pybind11;
 using namespace Jetscape;
@@ -63,6 +66,11 @@ void bind_hard_process(py::module_ &m) {
 #else
   m.attr("PYTHIA_GUN_HAS_PARTON_Y_CUT") = false;
 #endif
+#ifdef PYTHIAISRGUN_HAS_PTHAT_BINS
+  m.attr("PYTHIA_ISR_GUN_HAS_PTHAT_BINS") = true;
+#else
+  m.attr("PYTHIA_ISR_GUN_HAS_PTHAT_BINS") = false;
+#endif
 
   m.def(
       "hard_process_info",
@@ -87,8 +95,33 @@ void bind_hard_process(py::module_ &m) {
       "pythia_gun_bins",
       [](std::shared_ptr<JetScapeTask> task) {
         auto gun = std::dynamic_pointer_cast<PythiaGun>(task);
+#ifdef PYTHIAISRGUN_HAS_PTHAT_BINS
+        // the ISR hard process: the same windows, no rapidity cut
+        if (auto isr = std::dynamic_pointer_cast<PythiaIsrGun>(task)) {
+          const int n = isr->GetNPtHatBins();
+          py::list bins, seeds, sigma, err, acc;
+          for (int k = 0; k < n; ++k) {
+            bins.append(py::make_tuple(isr->GetPtHatBinMin(k), isr->GetPtHatBinMax(k)));
+            seeds.append(isr->GetPythiaSeed(k));
+            sigma.append(isr->GetSigmaGen(k));
+            err.append(isr->GetSigmaErr(k));
+            acc.append(isr->GetNAccepted(k));
+          }
+          py::dict d;
+          d["n_bins"] = n;
+          d["active"] = isr->GetActivePtHatBin();
+          d["bins"] = bins;
+          d["seeds"] = seeds;
+          d["sigma_gen"] = sigma;
+          d["sigma_err"] = err;
+          d["n_accepted"] = acc;
+          d["y_max"] = 0.0;                        // no rapidity cut in PythiaIsrGun
+          d["isr"] = true;
+          return d;
+        }
+#endif
         if (!gun)
-          throw std::invalid_argument("not a PythiaGun: " +
+          throw std::invalid_argument("not a PythiaGun or PythiaIsrGun: " +
                                       (task ? task->GetId() : std::string("None")));
 #ifdef PYTHIAGUN_HAS_PTHAT_BINS
         const int n = gun->GetNPtHatBins();
@@ -133,7 +166,7 @@ void bind_hard_process(py::module_ &m) {
 #endif
       },
       R"pbdoc(
-        PythiaGun's pTHat windows (<Hard><PythiaGun><pTHatBins>; one window,
+        PythiaGun's or PythiaIsrGun's pTHat windows (<Hard><PythiaGun><pTHatBins>; one window,
         pTHatMin-pTHatMax, without it): ``n_bins``, ``bins`` [(min, max)],
         ``active`` (the current event's window: event i uses i mod n_bins), and
         per window ``seeds`` (Pythia's Random:seed), ``sigma_gen``, ``sigma_err``

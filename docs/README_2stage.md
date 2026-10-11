@@ -224,6 +224,8 @@ docker logs -f xscape          # progress;  docker stop xscape  stops it cleanly
 - **Own XML** (another collision system): bind it and pass `--user-xml`:
   `-v "$PWD/xml:/xml:ro" … ./run_jobs.sh … /work/PbPb --user-xml /xml/PbPb_0_10.xml`
   (see [`prod_AuAu_0_10_jet/README.md`](../contribs/PyJetscape/example/prod_AuAu_0_10_jet/README.md) and `BuildContainerProd.md`, *A different collision system*).
+- **O+O with initial-state radiation** (`prod_OO_isr`): another folder of the image, selected
+  with `-w` (Apptainer `--pwd`); needs a newer image, see [§8](#8-oo-with-initial-state-radiation-prod_oo_isr).
 
 ### Apptainer (HPC)
 
@@ -714,3 +716,46 @@ wake.
 | many `hit_edge` warnings | the output grid is too small for this system: a larger x/y range in the grid YAML (§1, *Output grid*) |
 | files with different `arr` shapes in one campaign | jobs ran with different grids (an older image's default vs. the new one): keep one grid per campaign |
 | a failed job | its `OUTDIR/<stem>.log`; rerun the same command (finished jobs are skipped) |
+
+## 8. O+O with initial-state radiation (`prod_OO_isr`)
+
+The image also holds [`prod_OO_isr`](../contribs/PyJetscape/example/prod_OO_isr/README.md):
+O+O 200 GeV with ISR (PythiaIsrGun + iMATTER), one MUSIC run per event, Matter in the medium,
+and the jet hadrons (iColoredHadronization) made in the job; the bulk hadrons in the job
+(`--bulk-hadrons N`) or afterwards from the stored surfaces (`hadronize.py --tags bulk_bg`).
+There is no two-stage hydro and no pair file.
+
+**Image.** Only images built with the ISR support have it: the published ones (X-SCAPE
+`d31946c`, js-contrib `main`) do not. Build from the `oo_isr_test` branches, or from
+`contrib` / `main` once merged:
+
+```bash
+docker build -t xscape-prod:oo-test -f utils/Dockerfile.prod \
+  --build-arg XSCAPE_REF=oo_isr_test --build-arg JS_CONTRIB_REF=oo_isr_test .
+```
+
+**Working directory.** The image starts in `prod_AuAu_0_10_jet`; select the O+O folder with
+`-w` (Docker) or `--pwd` (Apptainer), or call its scripts by their full path:
+
+```bash
+OO=/opt/X-SCAPE/external_packages/js-contrib/contribs/PyJetscape/example/prod_OO_isr
+
+# Docker: 20 jobs x 25 events, all hadrons made in the jobs, no surfaces kept
+docker run --rm --gpus all --user "$(id -u):$(id -g)" -e OMP_NUM_THREADS=4 \
+  -v "$HOME/prod:/work" -w "$OO" $IMG \
+  ./run_jobs.sh -j 2 20 25 0 /work/OO_a --bulk-hadrons 100 --no-particlize
+
+# Apptainer: the same
+apptainer exec --nv --env OMP_NUM_THREADS=4 \
+  --pwd "$OO" --bind "$SCRATCH/prod:/work" xscape_prod.sif \
+  ./run_jobs.sh -j 2 20 25 0 /work/OO_a --bulk-hadrons 100 --no-particlize
+
+# Stage 2 on CPUs, only if the bulk was left for later (no --bulk-hadrons, particlize kept)
+apptainer exec --pwd "$OO" --bind "$SCRATCH/prod:/work" xscape_prod.sif \
+  ../prod_AuAu_0_10_jet/run_hadronize.py /work/OO_a -j 8 --tags bulk_bg --oversample 100
+```
+
+Everything of §2 applies (output under `/work`, `--user`, `OMP_NUM_THREADS`, MPS, one
+container per GPU). Always `--tags bulk_bg` in stage 2: the jet hadrons were made in the job.
+The options, outputs and physics are in the folder's
+[README](../contribs/PyJetscape/example/prod_OO_isr/README.md).

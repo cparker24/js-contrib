@@ -472,6 +472,11 @@ def main(argv=None):
                      f"(legs {pf.legs}); drop {t} from --tags")
         if t == "jet_frag" and "partons" not in pf.f:
             sys.exit(f"hadronize.py: {a.particlize} has no partons/")
+        if t == "jet_frag" and pf.attrs.get("jet_frag_inline"):
+            # e.g. prod_OO_isr: iColoredHadronization ran in the job (it needs the beam
+            # remnants); Colorless here would drop its partons (pstat 1000) and overwrite it
+            sys.exit(f"hadronize.py: {a.particlize}: the jet hadrons were made in the job "
+                     f"({pf.attrs['jet_frag_inline']}); drop jet_frag from --tags")
     if a.use_stored_seeds and any(v is not None for v in keep_bits.values()):
         print("hadronize.py: note -- --keep-bits with --use-stored-seeds: the in-job "
               "(--validate-inline) hadrons are full precision, so compare after rounding "
@@ -559,6 +564,14 @@ def main(argv=None):
     os.makedirs(workdir, exist_ok=True)
     with open(os.path.join(workdir, "music_input"), "w") as fh:
         fh.write(pf.music_input())
+    eos = [ln.split()[1] for ln in pf.music_input().splitlines()
+           if len(ln.split()) > 1 and ln.split()[0] == "EOS_to_use"]
+    if eos and eos[0] == "91" and any(t.startswith("bulk") for t in tags):
+        # iSS (readindata.cpp) takes the SMASH hadron list for EOS 91 and leaves the
+        # decays to SMASH, which this does not run
+        print("hadronize.py: WARNING -- MUSIC ran EOS 91 (SMASH hadron list): iSS samples "
+              "that list and does NOT decay the resonances (rho, omega, K*, Delta ... stay "
+              "in the bulk hadrons). Use EOS 9 for decayed hadrons.", file=sys.stderr)
     job_xml = os.path.join(workdir, "hadronize_job.xml")
     xml_text = write_job_xml(a, job_xml, n_exec, oversample)
     main_xml = os.path.join(workdir, "jetscape_main.xml")
