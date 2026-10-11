@@ -161,6 +161,17 @@ def parse_args() -> argparse.Namespace:
                    help="in-job hadron files: keep only charged hadrons")
     p.add_argument("--no-x", action="store_true", dest="no_x",
                    help="in-job hadron files: no positions t, x, y, z")
+    p.add_argument("--no-subtraction", action="store_true", dest="no_subtraction",
+                   help="REFERENCE run: 3dMCGlauber does not subtract the hard partons' "
+                        "momentum (Subtract_hard_momentum 0), so the strings keep the full "
+                        "Npart sqrt(s)/2 while the jets (hadronized as usual) also carry the "
+                        "hard pair's energy: the energy is counted twice, on purpose, to test "
+                        "the effect of the subtraction in small systems.  Same seed = same "
+                        "hard events (Pythia), but 3dMCGlauber's geometry agrees only for "
+                        "the first event (the subtraction draws from its random stream): "
+                        "compare ensembles, not events.  Recorded as "
+                        "subtract_hard_momentum = 0 in every file and the .json; keep these "
+                        "jobs in their own OUTDIR (or --campaign nosub)")
     p.add_argument("--max-skipped", type=int, default=3, dest="max_skipped", metavar="N",
                    help="an event whose simulation throws (e.g. Matter's 'minus log of "
                         "sudakov negative', ~1 in 400 events) is skipped and recorded; more "
@@ -206,10 +217,10 @@ def job_xml(a, out_h5: str):
     else:
         if _text(mcg, "generateOnlyPositions") != "1":
             problems.append("need <IS><MCGlauber><generateOnlyPositions>1 (ISR)")
-        if _text(mcg, "Subtract_hard_momentum") != "1":
-            problems.append("need <IS><MCGlauber><Subtract_hard_momentum>1: with 0 the hard "
-                            "partons' momentum stays in the strings and the hard pair's "
-                            "remnants make strings and jet hadrons, so energy counts twice")
+        # 1: the hard partons' momentum comes out of the strings (energy-consistent);
+        # 0 only as the --no-subtraction reference (energy counted twice, on purpose)
+        _set(mcg, "Subtract_hard_momentum", 0 if a.no_subtraction else 1).text = \
+            "0" if a.no_subtraction else "1"
         for tag, v in (("sqrts", a.sqrts), ("b_min", a.b_min), ("b_max", a.b_max)):
             if v is not None:
                 _set(mcg, tag, f"{v:g}")
@@ -416,7 +427,8 @@ def main() -> int:
           + (f", campaign {a.campaign} #{a.index}" if a.campaign else "")
           + f", {system}, {hard}, Matter in MUSIC, "
           + ("no jet hadronization" if a.no_jet_hadrons else "iColored jet hadronization")
-          + (f", iSS in the job ({a.bulk_hadrons} oversamples)" if out_bulk else ""))
+          + (f", iSS in the job ({a.bulk_hadrons} oversamples)" if out_bulk else "")
+          + (", NO SUBTRACTION (reference)" if a.no_subtraction else ""))
     print(f"  build    {a.build}")
     print(f"  job XML  {xml}")
     print(f"  grid     {a.grid}")
@@ -453,7 +465,7 @@ def main() -> int:
                               "(<stem>_hadrons_bulk_bg.h5)" if out_bulk else
                               "none in the job (hadronize.py on the particlize file)",
         "T_fo": float(_text(root, "Hydro/MUSIC/freezeout_temperature") or 0.15),
-        "subtract_hard_momentum": 1,
+        "subtract_hard_momentum": 0 if a.no_subtraction else 1,
     }
 
     # MUSIC / 3dMCGlauber resolve their input files relative to the working directory:
@@ -483,10 +495,17 @@ def main() -> int:
     ini = tasks.get(IS_ID)
     if ini is not None and hasattr(core, "isr_hard_momentum"):
         sub = core.isr_hard_momentum(ini)["subtract"]
-        if sub != 1:
-            sys.exit(f"run_prod_oo_isr.py: {IS_ID} runs Subtract_hard_momentum = {sub}, not 1")
-        print("  ISR      the hard partons' momentum is subtracted from the colliding "
-              "nucleons; recorded per event (isr_sub_*, remnant_*, strings_*)")
+        want = 0 if a.no_subtraction else 1
+        if sub != want:
+            sys.exit(f"run_prod_oo_isr.py: {IS_ID} runs Subtract_hard_momentum = {sub}, "
+                     f"not {want}")
+        if a.no_subtraction:
+            print("  ISR      REFERENCE (--no-subtraction): the hard partons' momentum is NOT "
+                  "subtracted, the energy is counted twice on purpose; recorded per event "
+                  "(isr_sub_*: what would have been subtracted)", file=sys.stderr)
+        else:
+            print("  ISR      the hard partons' momentum is subtracted from the colliding "
+                  "nucleons; recorded per event (isr_sub_*, remnant_*, strings_*)")
     else:
         print("  ISR      this build cannot report the subtracted momentum "
               "(PyJetscape without isr_hard_momentum)", file=sys.stderr)
@@ -536,7 +555,8 @@ def main() -> int:
                                                 encoding="unicode"),
                    "music_input": open("music_input").read(),
                    **{k: v for k, v in provenance.items()
-                      if k in ("prod", "prod_seed", "system", "prod_hard")}})
+                      if k in ("prod", "prod_seed", "system", "prod_hard",
+                                 "subtract_hard_momentum")}})
     hwriter = None
     if out_frag:
         hwriter = HadronH5Writer(out_frag, tag="jet_frag", n_samples=1, initiators=True,
@@ -545,7 +565,8 @@ def main() -> int:
                                         "source": os.path.basename(stem) + ".h5",
                                         **{k: v for k, v in provenance.items()
                                            if k in ("prod", "prod_seed", "system",
-                                                    "prod_hard")}})
+                                                    "prod_hard",
+                                                    "subtract_hard_momentum")}})
 
     n = n_hydro = no_medium = 0
     skipped = []                  # (event, error) of events whose simulation threw
@@ -661,6 +682,7 @@ def main() -> int:
     summary = {"out": None if writer is None else out_h5, "seed": a.seed,
                "seed_source": a.seed_source, "campaign": a.campaign, "index": a.index,
                "grid": a.grid, "system": system, "hard": hard, "bulk_info": a.bulk_info,
+               "subtract_hard_momentum": 0 if a.no_subtraction else 1,
                "events_requested": a.events, "events_written": n,
                # run_jobs.sh counts a job complete when written + skipped == requested
                "events_skipped": len(skipped),

@@ -298,7 +298,7 @@ events, CUDA MPS, `OMP_NUM_THREADS` = 20 cores / j (2026-10-10, GB10: 20 cores, 
   zeroes that momentum first: the strings keep the full Npart √s/2 although the hard partons
   and the remnants are hadronized too, so 6-12% of the event's energy counted twice (in the
   5-event test below; earlier O+O files of this production had 0). X-SCAPE now warns about 0 with ISR, and
-  `run_prod_oo_isr.py` refuses it. **Recorded per event** (`diag/`, `events/`):
+  `run_prod_oo_isr.py` sets 1 unless `--no-subtraction` (below) asks for the reference. **Recorded per event** (`diag/`, `events/`):
   `isr_sub_{E,px,py,pz}_{proj,targ}` and `isr_sub_E_total` (handed over for subtraction from
   the projectile, +z, and target, -z, nucleon), `remnant_E_{proj,targ}` and
   `remnant_pz_{proj,targ}` (the two nucleons' remnants, to the jet hadronization), and
@@ -306,6 +306,25 @@ events, CUDA MPS, `OMP_NUM_THREADS` = 20 cores / j (2026-10-10, GB10: 20 cores, 
   sum). Per event, exactly: `strings_E_total + isr_sub_E_total + remnant_E_proj +
   remnant_E_targ = Npart √s/2` (5-event test: 1855.7 + 89.7 + 54.6 = 2000.0 GeV for
   Npart 20; the subtracted energy was 66-136 GeV, the remnants 24-55 GeV).
+- **Reference without the subtraction: `--no-subtraction`.** Runs the same chain with
+  `Subtract_hard_momentum` 0 and still hadronizes the jets (iColored): the strings keep the
+  full Npart √s/2 while the jet hadrons also carry the hard partons and the hard pair's
+  remnants, so that energy is counted twice, on purpose -- the difference to the default is
+  what the subtraction does in a small system. Every file and the `.json` record
+  `subtract_hard_momentum` (0 here, 1 by default; check it before combining files), the
+  start prints a warning, and the bookkeeping is the same (`isr_sub_*` is then what would
+  have been subtracted; `strings_E_total` = Npart √s/2). Keep such jobs in their own OUTDIR
+  or campaign (`--campaign nosub`): the file names are not changed, so that `run_jobs.sh`
+  can resume them. **Compare ensembles, not events:** the same seed gives the same hard
+  events (Pythia has its own stream), but 3dMCGlauber's geometry agrees only for the first
+  event, because the subtraction draws from its random stream (4-event test: event 0 paired
+  exactly, the strings carried 144.3 GeV more = subtracted + remnants; from event 1 on Npart
+  differed).
+
+```bash
+python run_prod_oo_isr.py --events 20 --seed 1 --outdir out_nosub --bulk-hadrons 100 \
+       --no-particlize --no-subtraction                # the reference, next to out/
+```
 - **The hard nucleon pair makes strings only if it is not yet connected**
   (`Glauber::decide_produce_string_num`). Peripheral events can end up with no string at all
   (`hydro_row` -1); in p+p this is most events (9 of 12 in a test).
