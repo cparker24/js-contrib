@@ -40,7 +40,8 @@
 #
 # A failed job is logged and the others continue; re-run just that seed later.
 # Jobs whose .json summary already says complete are skipped (with --write-particlize the
-# particlize file must be complete too), so an interrupted campaign can
+# particlize file must be complete too; events a driver skipped on purpose, its
+# events_skipped, count as done), so an interrupted campaign can
 # be restarted with the same command.  Give each grid YAML its own OUTDIR: the skip test
 # looks at the seed and event count only.
 #
@@ -244,8 +245,9 @@ for (( k = 0; k < NJOBS; k++ )); do
   [ -n "$CAMPAIGN" ] && naming=(--campaign "$CAMPAIGN" --index $(( k + 1 )))
   if [ -f "$OUTDIR/$tag.json" ] && \
      python -c "import json,sys; d=json.load(open('$OUTDIR/$tag.json')); \
-                sys.exit(d['events_written'] != $EVENTS or \
-                         d.get('particlize_events_written', $EVENTS) != $EVENTS)" \
+                s=d.get('events_skipped', 0); p=d.get('particlize_events_written'); \
+                sys.exit(d['events_written'] + s != $EVENTS or \
+                         (p is not None and p + s != $EVENTS))" \
        2>/dev/null; then
     echo "[$(date +%F\ %T)] $label: already complete, skipping"; continue
   fi

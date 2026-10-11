@@ -157,6 +157,10 @@ def parse_args() -> argparse.Namespace:
                    help="in-job hadron files: keep only charged hadrons")
     p.add_argument("--no-x", action="store_true", dest="no_x",
                    help="in-job hadron files: no positions t, x, y, z")
+    p.add_argument("--max-skipped", type=int, default=3, dest="max_skipped", metavar="N",
+                   help="an event whose simulation throws (e.g. Matter's 'minus log of "
+                        "sudakov negative', ~1 in 400 events) is skipped and recorded; more "
+                        "than N skipped events stop the job (default 3)")
     p.add_argument("--dry-run", action="store_true", dest="dry_run",
                    help="check the XML and grid, write the job XML, print the plan; do not run")
     rp.add_seed_args(p, "3dMCGlauber, Pythia, iMATTER, Matter")
@@ -481,12 +485,30 @@ def main() -> int:
                                                     "prod_hard")}})
 
     n = n_hydro = no_medium = 0
+    skipped = []                  # (event, error) of events whose simulation threw
     t_job = time.time()
     try:
         jetscape.ExecInit()
         for i in range(jetscape.GetNumberOfEvents()):
             t0 = time.time()
-            jetscape.ExecPerEvent()
+            try:
+                jetscape.ExecPerEvent()
+            except RuntimeError as exc:
+                # A module threw inside the event (C++ exception, e.g. Matter's "minus log
+                # of sudakov negative").  The same seed hits it again on a rerun, so skip
+                # this event rather than fail the job; nothing of it is written.
+                skipped.append((i, str(exc)))
+                print(f"prod_OO_isr: event {i + 1}/{a.events} SKIPPED: {exc}",
+                      file=sys.stderr)
+                try:
+                    jetscape.ClearPerEvent()
+                except RuntimeError:
+                    pass
+                if len(skipped) > a.max_skipped:
+                    raise RuntimeError(f"{len(skipped)} events skipped (more than "
+                                       f"--max-skipped {a.max_skipped}): {skipped}") from exc
+                continue
+            k = n                         # this event's row in every output file
             h = core.hard_process_info(gun)
             ev = {"pthat": float(h["pthat"]), "sigma_gen": float(h["sigma_gen"]),
                   "sigma_err": float(h["sigma_err"]),
@@ -512,23 +534,23 @@ def main() -> int:
                 n_cells = int(len(hydro.surface_to_numpy()))
                 bulk = core.soft_hadrons_numpy(iss) if n_cells else []
                 iss_seed = int(core.soft_last_random_seed(iss))
-                bwriter.append_unit(bulk, unit=i, event=i, seed=iss_seed, n_cells=n_cells,
+                bwriter.append_unit(bulk, unit=k, event=i, seed=iss_seed, n_cells=n_cells,
                                     hydro_row=row, has_medium=int(medium))
                 bulk_n = len(bulk["pid"]) if n_cells else 0
                 ev["inline_iss_seed_bg"] = iss_seed
             if pwriter is not None:
-                pwriter.Exec(i, bg_id=i, hydro_row=row, **ev)
+                pwriter.Exec(k, bg_id=k, hydro_row=row, job_event=i, **ev)
             frag_n = 0
             if hwriter is not None:
                 frag = core.hadronization_hadrons_numpy(tasks["HadronizationManager"])
                 frag_n = len(frag["pid"])
                 hwriter.append_unit([frag], initiators=initiators_from_manager(mgr),
-                                    unit=i, event=i, hydro_row=row, has_medium=int(medium),
+                                    unit=k, event=i, hydro_row=row, has_medium=int(medium),
                                     pthat=ev["pthat"])
             jetscape.ClearPerEvent()
             wall = time.time() - t0
             if pwriter is not None:
-                pwriter.write_events(i, wall_s=wall)
+                pwriter.write_events(k, wall_s=wall)
             n += 1
             n_hydro += row >= 0
             print(f"prod_OO_isr: event {i + 1}/{a.events} done in {wall:.1f} s, pTHat "
@@ -550,7 +572,8 @@ def main() -> int:
         if writer is not None:
             writer.Finish()
         if pwriter is not None:
-            pwriter.Finish(complete=pwriter.GetNumberOfEventsWritten() == a.events)
+            pwriter.Finish(complete=pwriter.GetNumberOfEventsWritten() + len(skipped)
+                           == a.events)
         if hwriter is not None:
             hwriter.close()
         if bwriter is not None:
@@ -569,11 +592,15 @@ def main() -> int:
                  out_bulk):
         if path and os.path.exists(path):
             with h5py.File(path, "a") as f:
-                f.attrs.update({**final, "prod_wall_s_total": time.time() - t_job})
+                f.attrs.update({**final, "prod_wall_s_total": time.time() - t_job,
+                                "events_skipped": len(skipped)})
     summary = {"out": None if writer is None else out_h5, "seed": a.seed,
                "seed_source": a.seed_source, "campaign": a.campaign, "index": a.index,
                "grid": a.grid, "system": system, "hard": hard, "bulk_info": a.bulk_info,
                "events_requested": a.events, "events_written": n,
+               # run_jobs.sh counts a job complete when written + skipped == requested
+               "events_skipped": len(skipped),
+               "skipped": [{"event": e, "error": m} for e, m in skipped],
                "hydro_events_written": n_hydro, "events_without_medium": no_medium,
                **{k: v.tolist() if hasattr(v, "tolist") else v for k, v in final.items()},
                "wall_s": round(time.time() - t_job, 1)}
@@ -587,8 +614,9 @@ def main() -> int:
     with open(stem + ".json", "w") as f:
         json.dump(summary, f, indent=1)
     print("prod_OO_isr:", json.dumps(summary))
-    rp.leave_workdir(a, workdir, n == a.events)
-    return 0 if n == a.events else 1
+    done = n + len(skipped) == a.events
+    rp.leave_workdir(a, workdir, done)
+    return 0 if done else 1
 
 
 if __name__ == "__main__":

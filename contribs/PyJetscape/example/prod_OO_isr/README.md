@@ -71,6 +71,17 @@ python run_prod_oo_isr.py --events 30 --seed 1 --pthat-bins 10-20,20-40,40-60
 OO_STEM=out/OO_isr_seed0001 jupyter nbconvert --to notebook --execute --inplace oo_isr_overview.ipynb
 ```
 
+**Events that fail are skipped, not the job.** A module that throws inside an event (seen:
+Matter's "minus log of sudakov negative", 1 event in ~400 in the benchmark below, with
+`-j 12` under MPS; the same seed alone did not fail again, so it depends on the medium's
+last bits) costs that event only: nothing of it is written, the job goes on, and the `.json`
+lists it (`events_skipped`, `skipped` with the event and the error; `events_skipped` also as
+a file attribute). Rows stay consistent in every file; `events/job_event` (particlize) and
+`units/event` (hadron files) give the event's number in the job, as `diag/event` does.
+`run_jobs.sh` counts written + skipped events as complete, so a campaign does not rerun
+the job. More than `--max-skipped` (default 3) skipped events stop the job: then something
+else is wrong.
+
 **No hydro reuse, also with pT̂ windows.** With ISR the strings, and so the medium, are made
 from what each event's hard scattering left (its partons' momentum is subtracted from the
 colliding nucleons), so a medium belongs to one hard event. Every event runs the whole chain
@@ -242,6 +253,26 @@ Each job writes, next to each other (stem `OO_isr_seedNNNN`, or `OO_isr_<campaig
 Measured on the GB10 (2026-10-10, one job, default settings): ~5 s per event, 2.8 GB peak
 memory; per event ~17 MB hydro file, ~10 MB particlize file. `--bulk-hadrons 50` adds ~0.3 s
 per event (~5,600 hadrons per event over the 50 oversamples).
+
+### Throughput on the GB10 (campaigns)
+
+Hadrons only (`--bulk-hadrons 10 --no-particlize --no-hydro-file`), one wave of j jobs x 10
+events, CUDA MPS, `OMP_NUM_THREADS` = 20 cores / j (2026-10-10, GB10: 20 cores, 121 GB):
+
+| `-j` | `OMP_NUM_THREADS` | events/h | s per event in a job | peak memory (machine, ~7 GB idle) | GPU busy (mean) |
+|---|---|---|---|---|---|
+| 4 | 5 | 1,520 | 9.0 | 18.5 GB | 77% |
+| 8 | 2 | 1,620 | 17.1 | 28.5 GB | 92% |
+| 12 | 1 | ~1,600 | 23.7 | 38 GB | 92% |
+| 16 | 1 | 1,650 | 33.7 | 48 GB | 93% |
+
+- **The GPU is the limit**, not memory or cores: from `-j 8` it is ~92% busy and the
+  throughput stays at ~1,600-1,650 events/h. Memory is no constraint (~2.5-3 GB per job).
+- **Recommended:** `OMP_NUM_THREADS=2 ./run_jobs.sh -j 8 --mps ...` (`-j 4` is within 6% if
+  the GPU should stay less loaded). That is ~8-9x the Au+Au jet production (~190 events/h,
+  [`BENCHMARK_GB10.md`](../../../../docs/BENCHMARK_GB10.md)).
+- With the hydro file and the particlize file the jobs write more (~27 MB per event) but do
+  the same GPU work; not measured as a campaign.
 
 ## Physics notes and limits
 
