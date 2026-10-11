@@ -1,0 +1,22 @@
+# Output grid for run_prod_oo_isr.py  (python run_prod_oo_isr.py --grid grid_oo.yaml)
+#
+# O+O: 64 x 64 x 32 cells (powers of two, as for FNO4d) at dx = dy = 0.3125 fm,
+# deta = 0.3125.  x, y reach +-9.84 fm, the box of the earlier O+O MUSIC files
+# (x_min -10, dx 0.3125); eta is the Au+Au grid's.  With an even n the two middle cells
+# are at +-step/2.
+#
+# Each spatial axis is n cell CENTRES from min to max inclusive: step = (max - min)/(n - 1).
+# The box must lie inside MUSIC's grid, which comes from <IS> in the XML: x, y in
+# [-15, 14.7] fm and eta_s in [-6, 5.8]; run_prod_oo_isr.py checks this before starting.
+#
+# See ../prod_AuAu_0_10/grid_fno.yaml for the tau settings.
+
+grid:
+  x:   {min: -9.84375, max: 9.84375, n: 64}      # dx   = 0.3125 fm  (= 19.6875 / 63)
+  y:   {min: -9.84375, max: 9.84375, n: 64}      # dy   = 0.3125 fm
+  eta: {min: -4.84375, max: 4.84375, n: 32}      # deta = 0.3125     (=  9.6875 / 31)
+
+tau:
+  min: 0.5          # first stored frame [fm/c]; MUSIC starts near 0.4 fm/c here
+  dtau: 0.1         # = MUSIC's stored-frame spacing (5 x Delta_Tau 0.02)
+  max_ntau: 0       # 0: grow to the longest event in the file

@@ -23,6 +23,9 @@ the top each show one feature of the bindings.
    │    └─ run_h5toROOT.py                   → ROOT files
    │         └─ analysis_root/  C++/ROOT     → HadronFileReader.h, distributions
    └─ moved between machines with utils/remote_transfer (GCS, OSDF)
+ prod_OO_isr               O+O, ISR + jet    → hydro file, jet hadrons (in the job)
+   │  --bulk-hadrons N                       → bulk hadrons in the job too
+   │  (default: particlize file)             → hadronize.py --tags bulk_bg → bulk hadrons
 ```
 
 ## Productions
@@ -31,6 +34,7 @@ the top each show one feature of the bindings.
 |---|---|---|
 | [`prod_AuAu_0_10/`](prod_AuAu_0_10/README.md) | 0–10% Au+Au 200 GeV hydro evolutions (3D MC-Glauber, MUSIC on the GPU), written straight to FNO4d training HDF5 on an output grid chosen in a YAML file; `run_prod.py`, `run_jobs.sh` | [README](prod_AuAu_0_10/README.md) |
 | [`prod_AuAu_0_10_jet/`](prod_AuAu_0_10_jet/README.md) | the same medium with a jet: the two-stage hydro writes background/jet **pairs** (`run_prod_jet.py`, `run_jobs.sh`, optional pT̂ windows). With `--write-particlize` it also stores both freeze-out surfaces and the partons, which `hadronize.py` / `run_hadronize.py` turn into hadrons later, on CPUs. `run_h5toROOT.py` converts a hadronized campaign to ROOT ([`root_export/`](prod_AuAu_0_10_jet/root_export/README.md)) | [README](prod_AuAu_0_10_jet/README.md); in the containers: [`docs/README_2stage.md`](../../../docs/README_2stage.md) |
+| [`prod_OO_isr/`](prod_OO_isr/README.md) | O+O 200 GeV with initial-state radiation (PythiaIsrGun + iMATTER, strings from what the hard scattering left) and Matter in one MUSIC medium per event, tuned O+O 3D MC-Glauber/MUSIC parameters: the hydro evolution, the jet hadrons of iColoredHadronization (always in the job), and the bulk hadrons either in the job (`--bulk-hadrons N`, with `--no-particlize` nothing is left to hadronize) or later from the stored surfaces (`hadronize.py --tags bulk_bg`); `run_prod_oo_isr.py`, `run_jobs.sh`. Needs X-SCAPE's `<Hard><ISR>` (branch `oo_isr_test`) | [README](prod_OO_isr/README.md) |
 
 ## Analyses
 
