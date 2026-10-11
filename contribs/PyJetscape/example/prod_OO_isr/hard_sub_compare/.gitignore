@@ -1,0 +1,5 @@
+# the two campaigns' data and logs stay local
+sub/
+nosub/
+seeds_used.tsv
+*.log
