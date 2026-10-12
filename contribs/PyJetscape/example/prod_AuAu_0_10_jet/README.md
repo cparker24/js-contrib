@@ -970,9 +970,13 @@ Two have a switch: the production XMLs turn MUSIC's anisotropy diagnostic off (A
 *Potential next steps*), and MUSIC_2 starts from MUSIC_1's state (A8, on by default, see
 [MUSIC_2 from MUSIC_1's state](#music_2-from-music_1s-state-default)).
 
-On the GB10, 4 events with `--reuse 2` and `--write-particlize both`: 115 → 99 s without the
-restart, 93 s with it; job CPU 370 → 239 s. Every output identical. The host-limited 3090 box
-should gain more; that's not measured yet.
+On the GB10, one job, 4 events with `--reuse 2` and `--write-particlize both`: 115 → 99 s
+without the restart, 93 s with it; job CPU 370 → 239 s. Every output identical.
+
+The campaign setting, `-j 4 --mps` with `--pthat-bins 10-20,20-30,30-40 --jets-per-bin 5`:
+**329 → 381 events/h (+16 %)**, at about half the CPU per event; the GPU is then 89 % busy
+([BENCHMARK_GB10.md](../../../../docs/BENCHMARK_GB10.md#host-cpu-fixes-a1a9-and-the-restart-2026-10-11)).
+The host-limited 3090 box should gain more; that's not measured yet.
 
 Measured on the GB10 with the jet leg frame by frame and the cache: a job alone peaks at
 6.45 GB instead of 7.84 (campaign settings: 6.42 instead of 8.00), at 12 % less CPU per

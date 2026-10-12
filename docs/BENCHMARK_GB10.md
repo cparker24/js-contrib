@@ -35,6 +35,13 @@ pay off, and is there an OpenMP or GPU bottleneck?
   6.4 GB), with bit-identical output. Its CPU per event falls by 12 %, because the
   drivers now default to one OpenBLAS thread. The point is more jobs per machine where
   memory is the limit (the RTX 3090 box, cluster nodes).
+- **Host CPU fixes and the restart** (2026-10-11,
+  [below](#host-cpu-fixes-a1a9-and-the-restart-2026-10-11)): bit-identical, merged A1–A7/A9
+  plus MUSIC_2 starting from MUSIC_1's state (on by default).
+  - **Campaign setting, `-j 4 --mps`:** **329 → 381 events/h (+16 %)** at about half the CPU
+    per event (49.5 → 26.2 core-s), GPU 79 → 89 % busy, same memory.
+  - **One job alone:** two-stage −19 % wall (jet events −25 to −28 %), hydro-only −16 %,
+    O+O −15 %.
 - **The startup hang** (jobs started at the same moment could hang forever at
   `Initialize MUSIC`) is fixed by per-job working directories (see
   [the startup race](#bug-concurrent-jobs-can-hang-at-start)).
@@ -473,6 +480,88 @@ so their per-event peaks don't coincide; later jobs start as slots free up anywa
   of 10 jobs per GPU should then fall to ~85–90 GB. That is to be measured there, with
   `--stagger` and the cache on a bind-mounted host path. Not the container's `/dev/shm`:
   it is private to the container and 64 MB by default.
+
+### Host CPU fixes A1–A9 and the restart (2026-10-11)
+
+[`REPORT_CPU_GPU.md`](Plans/REPORT_CPU_GPU.md) found every production host-dominated per event.
+Its bit-identical fixes:
+- **A1–A7, A9:** merged in MUSIC4GPU #19, X-SCAPE #166/#167 and js-contrib #56; see
+  [`PLAN_cpu_fixes_A.md`](Plans/PLAN_cpu_fixes_A.md).
+- **A8, MUSIC_2 starting from MUSIC_1's state:** branches `music2_restart`, on by default in
+  `run_prod_jet.py`; see [`PLAN_music2_restart.md`](Plans/PLAN_music2_restart.md).
+
+They were measured here twice: one job alone, stage by stage, and as a 4-job campaign.
+
+**Setup:**
+- **Baseline:** X-SCAPE `733b2838`, MUSIC4GPU `bc8543a`, js-contrib `309bb90` (the code
+  before the PRs).
+- **New:** X-SCAPE `music2_restart` (`contrib` + #166/#167 + the restart), MUSIC4GPU
+  `music2_restart` (`XSCAPE` + #19 + the checkpoint), js-contrib `music2_restart`.
+- `build_gpu`, env `js_fno`; seed 1 unless given.
+- **Output check:** every dataset compared, bit for bit (`source/flux` within 1e-12). All
+  identical.
+
+**One job alone**, stage by stage. Two-stage Au+Au, 4 events, `--reuse 2`, `--write-particlize
+both`, default threads; `/usr/bin/time` for the job, the driver's `done in` per event:
+
+| | baseline | + js-contrib A1, A2 | + MUSIC4GPU A3–A7 | + restart (A8) | total |
+|---|---|---|---|---|---|
+| job wall | 115.1 s | 108.5 s | 99.2 s | 92.9 s | **−19 %** |
+| event 1 (new background) | 31.7 s | 30.7 | 27.8 | 26.5 | −16 % |
+| event 2 (jet, reused background) | 16.5 s | 14.8 | 13.5 | 12.3 | **−25 %** |
+| event 3 (new background) | 37.1 s | 35.7 | 32.1 | 30.3 | −18 % |
+| event 4 (jet, reused background) | 20.4 s | 18.0 | 16.6 | 14.6 | **−28 %** |
+| job CPU (user) | 370 s | 356 | 337 | 239 | **−35 %** |
+
+| one job alone | before | after | |
+|---|---|---|---|
+| hydro-only Au+Au (`run_prod.py`, 3 events) | 38.7 s, CPU 99 s | 32.6 s, CPU 84 s | −16 % wall |
+| O+O (`run_prod_oo_isr.py`, 4 events, seed 101) | 22.0 s, CPU 37.7 s | 18.7 s, CPU 34.5 s | −15 % wall |
+| two-stage `--particlize-only` (A1–A7 already in) | 88.5 s, CPU 325 s | 82.0 s, CPU 229 s (+ A9, restart) | −7 % wall |
+
+MUSIC timers of the hydro-only job (3 events, totals):
+- string-source fills 100 → 12 (A3: only the 4 real ones per event remain);
+- no-surface freeze-out check 0.93 → 0.016 s (A7, no grid copy);
+- GPU → host grid copies 0.94 → 0 s (A4, A7);
+- 19.8 → 16.4 ms per MUSIC step.
+
+The restart starts MUSIC_2 at step 28 (τ = 0.96 fm/c) of ~500 in every event. That removes
+MUSIC_2's four string fills and 28 GPU steps. Its checkpoint holds 96 MB of GPU state, ~77,000
+surface cells and 6 frames (109 MB host).
+
+**Campaign: 4 jobs at once** (the c1 setting of `README_2stage.md` §4 on one GPU). Both runs:
+- `run_jobs.sh -j 4 --mps 4 15 1`: 4 jobs × 15 events, seeds 1–4, started together;
+- `--pthat-bins 10-20,20-30,30-40 --jets-per-bin 5 --parton-ymax 0.6 --write-particlize both`
+  (one background per 15 events);
+- `OMP_NUM_THREADS=5`, `OMP_WAIT_POLICY=passive`, `MUSIC_CUDA_SYNC=block`, no LBT cache, no
+  stagger.
+
+events/h = 60 × 3600 / makespan; *machine CPU* from `/proc/stat` over the makespan; *GPU busy*
+the mean SM % of `nvidia-smi dmon`; *memory* the maximum of `free` (used).
+
+| 4 jobs × 15 events | baseline | new | change |
+|---|---|---|---|
+| makespan | 657 s | 567 s | −14 % |
+| **events/h** | 328.8 | **381.1** | **+16 %** |
+| s/event per job (seeds 1–4) | 39.0, 42.1, 43.1, 42.9 | 34.3, 36.9, 37.1, 35.8 | −13 % |
+| machine CPU per event | 49.5 core-s | 26.2 core-s | **−47 %** |
+| GPU busy (mean SM) | 79 % | 89 % | |
+| memory used (max) | 32.3 GB | 31.5 GB | |
+
+- **Output:** all 8 files of the 60 events (pair and particlize) are identical, dataset by
+  dataset.
+- **The restart:** MUSIC_2 started from the checkpoint in all 60 events (step 28).
+- **Why +16 %, more than the GPU saving alone (~6 % of the jet leg's steps):** at 79 % busy
+  the GPU was not yet the limit. Each job's host work stood between its GPU steps, and with
+  that work halved the GPU is fed faster.
+- **Now at the ceiling:** at 89 % busy the GB10 is at the level where earlier sweeps levelled
+  off (86–93 %). More events/h here need less GPU work (C of the report).
+- **Not comparable to the tables above:** this is the campaign setting (one background per
+  15 events, pT̂ 10–40 GeV), so 381 events/h can't be compared with the ~190–205 measured
+  there (a new background every event, pT̂ 50–70 GeV).
+- **Memory:** unchanged. The checkpoint's ~100 MB GPU + ~110 MB host per job are offset by
+  the store and resampling savings.
+- **One run per setting:** earlier repeats spread by ±2 %.
 
 ### Before the speed-ups (first measurement)
 
