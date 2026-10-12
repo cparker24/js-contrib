@@ -231,6 +231,19 @@ def _weight_matrix(i0, i1, w, n):
     return m
 
 
+def _bands(m, rows=4):
+    """``(o0, o1, lo, hi)`` per block of ``rows`` output rows of weight matrix ``m``: rows
+    ``o0:o1`` have their nonzero weights in source columns ``lo:hi`` only."""
+    nz = m != 0
+    out = []
+    for o0 in range(0, m.shape[0], rows):
+        o1 = min(o0 + rows, m.shape[0])
+        cols = np.flatnonzero(nz[o0:o1].any(axis=0))
+        lo, hi = (int(cols[0]), int(cols[-1]) + 1) if cols.size else (0, 0)
+        out.append((o0, o1, lo, hi))
+    return out
+
+
 def resample(arr, src, out):
     """Resample ``(ntau, nx, ny, neta, F)`` from grid ``src`` onto grid ``out``.
 
@@ -288,13 +301,33 @@ def resample(arr, src, out):
     sy, my = axis_matrix(fy, src.ny)
     se, me = axis_matrix(feta, max(int(src.neta), 1))
 
+    # The three passes, eta first (it shrinks most), each written as matmuls straight into
+    # buffers kept for the whole call: features leading, so every pass multiplies
+    # contiguous blocks and nothing is copied between passes, and per band of output rows
+    # only the source rows it touches (the weight matrices are ~96 % zeros).  Every output
+    # value is the same dot product as with the dense matrices -- the dropped terms are
+    # exact zeros -- and comes out bit for bit the same (tests/test_resample.py).
+    nx_s, ny_s, ne_s = mx.shape[1], my.shape[1], me.shape[1]
+    a = np.empty((n_feat, ne_s, ny_s, nx_s))
+    b = np.empty((n_feat, out.neta, ny_s, nx_s))
+    c = np.empty((n_feat, out.neta, out.ny, nx_s))
+    d = np.empty((out.nx, n_feat * out.neta * out.ny))
+    a3, b3 = a.reshape(n_feat, ne_s, -1), b.reshape(n_feat, out.neta, -1)
+    c2 = c.reshape(-1, nx_s)
+    eta_bands, y_bands, x_bands = _bands(me), _bands(my), _bands(mx)
+
     def spatial(k):
         """Source tau step k -> (out.nx, out.ny, out.neta, F) float32, unmasked."""
-        a = np.asarray(arr[k, sx, sy, se, :], dtype=np.float64)
-        a = np.einsum("ke,xyef->xykf", me, a, optimize=True)   # eta first: shrinks most
-        a = np.einsum("jy,xykf->xjkf", my, a, optimize=True)
-        a = np.einsum("ix,xjkf->ijkf", mx, a, optimize=True)
-        return a.astype(np.float32)          # map_coordinates' output dtype is the input's
+        a[...] = np.asarray(arr[k, sx, sy, se, :]).transpose(3, 2, 1, 0)   # float64
+        for o0, o1, lo, hi in eta_bands:
+            np.matmul(me[o0:o1, lo:hi], a3[:, lo:hi], out=b3[:, o0:o1])
+        for o0, o1, lo, hi in y_bands:
+            np.matmul(my[o0:o1, lo:hi], b[:, :, lo:hi], out=c[:, :, o0:o1])
+        for o0, o1, lo, hi in x_bands:
+            np.matmul(mx[o0:o1, lo:hi], c2[:, lo:hi].T, out=d[o0:o1])
+        # map_coordinates' output dtype is the input's
+        return d.reshape(out.nx, n_feat, out.neta, out.ny).transpose(0, 3, 2, 1).astype(
+            np.float32)
 
     result = np.zeros((out.ntau, out.nx, out.ny, out.neta, n_feat), dtype=np.float32)
     cache = {}
