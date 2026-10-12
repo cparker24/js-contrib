@@ -158,15 +158,19 @@ def parse_args() -> argparse.Namespace:
                         "shower/ is stored. The particlize file's events/ then have "
                         "ntau_jet_music (MUSIC steps) instead of ntau_jet, no "
                         "frames_identical, and wall_s. Needs --write-particlize")
-    p.add_argument("--music2-restart", action="store_true", dest="music2_restart",
-                   help="MUSIC_2 starts from MUSIC_1's state at the last freeze-out step "
-                        "before the liquefier's tau_delay (no droplet deposits earlier) "
-                        "instead of recomputing the identical leading steps: no string "
-                        "deposition and ~30 fewer steps per jet event, the same output "
-                        "(music4gpu; js-contrib docs/Plans/PLAN_music2_restart.md). An "
-                        "event that does not fit runs from tau0 and says why. "
-                        "MUSIC_RESTART_VERIFY=1 runs every jet leg from tau0 and compares "
-                        "its state with the checkpoint instead")
+    p.add_argument("--music2-restart", action=argparse.BooleanOptionalAction, default=True,
+                   dest="music2_restart",
+                   help="(default: on) MUSIC_2 starts from MUSIC_1's state at the last "
+                        "freeze-out step before the liquefier's tau_delay (no droplet "
+                        "deposits earlier) instead of recomputing the identical leading "
+                        "steps: no string deposition and ~30 fewer steps per jet event, "
+                        "the same output (music4gpu; js-contrib "
+                        "docs/Plans/PLAN_music2_restart.md). An event that does not fit "
+                        "runs from tau0 and the log says why. Off by itself with "
+                        "--write-particlize jet / --surface jet (MUSIC_1 builds no surface) "
+                        "and on a build without the restart. --no-music2-restart: every "
+                        "jet leg from tau0. MUSIC_RESTART_VERIFY=1 runs every jet leg from "
+                        "tau0 and compares its state with the checkpoint instead")
     p.add_argument("--bulk-info", choices=("slim", "full"), default="slim", dest="bulk_info",
                    help="the background's framework copy, which Matter, LBT and the liquefier "
                         "read: 'slim' (default) keeps e, s, T, vx, vy, vz per cell, ~7 GiB "
@@ -601,27 +605,41 @@ def open_inline(a, jetscape, stem):
     return InlineHadrons(tasks["iSS"], tasks["HadronizationManager"], stem, n_os)
 
 
-def restart_legs(a, jetscape, writer):
-    """--music2-restart: MUSIC_1 keeps a checkpoint at the liquefier's tau_delay, MUSIC_2
-    starts from it.  -> MUSIC_2, or None without the option."""
+def restart_plan(a) -> tuple:
+    """Whether MUSIC_2 starts from MUSIC_1's state (--music2-restart, the default), from
+    the options and the build alone, so the files record it.  -> (on, why not)."""
     if not a.music2_restart:
+        return False, "--no-music2-restart"
+    legs = surface_legs(a)
+    if "jet" in legs and "bg" not in legs:
+        # the jet leg's surface up to the checkpoint would come from MUSIC_1, which
+        # builds none: every jet leg would run from tau0 anyway
+        return False, (f"{JET_ID} builds the freeze-out surface and {BG_ID} does not "
+                       "(--write-particlize jet / --surface jet), so the checkpoint would "
+                       "lack it; --write-particlize both or none restarts")
+    from jetscape import pyjetscape_core as core
+    if not hasattr(core.MpiMusic, "set_restart_from"):
+        return False, ("this build has no MpiMusic.set_restart_from (X-SCAPE and "
+                       "music4gpu before the restart)")
+    return True, ""
+
+
+def restart_legs(a, jetscape, writer):
+    """MUSIC_1 keeps a checkpoint at the liquefier's tau_delay, MUSIC_2 starts from it
+    (when restart_plan said so).  -> MUSIC_2, or None."""
+    if not a.restart_on:
+        print(f"  restart  OFF: {a.restart_why}")
         return None
     tasks = {t.GetId(): t for t in jetscape.GetTaskList()}
     bg, jet = tasks[BG_ID], tasks[JET_ID]
-    if not hasattr(jet, "set_restart_from"):
-        sys.exit("run_prod_jet.py: --music2-restart needs a build with "
-                 "MpiMusic.set_restart_from (X-SCAPE + music4gpu music2_restart)")
     tau = writer.liquefier_tau_delay
     if not tau:
-        sys.exit("run_prod_jet.py: --music2-restart needs the liquefier: its tau_delay "
-                 "sets where MUSIC_1 keeps its checkpoint")
+        sys.exit("run_prod_jet.py: the restart needs the liquefier (its tau_delay sets "
+                 "where MUSIC_1 keeps its checkpoint); run with --no-music2-restart")
     if jet.get_freeze_out_surface() and not bg.get_freeze_out_surface():
-        # the jet leg's surface up to the checkpoint would come from MUSIC_1, which
-        # builds none: every jet leg would run from tau0 anyway
-        print(f"  restart  OFF: {JET_ID} builds the freeze-out surface and {BG_ID} does "
-              "not (--write-particlize jet), so the checkpoint would lack it; use "
-              "--write-particlize both or none")
-        return None
+        sys.exit(f"run_prod_jet.py: {JET_ID} builds the freeze-out surface and {BG_ID} "
+                 "does not, which restart_plan did not expect; run with "
+                 "--no-music2-restart")
     bg.set_checkpoint_tau(tau)
     jet.set_restart_from(bg)
     print(f"  restart  {JET_ID} starts from {BG_ID}'s state at tau <= {tau:g} fm/c "
@@ -722,6 +740,7 @@ def main() -> int:
     import numpy as np
     import jetscape as js
     from jetscape.pair_h5 import PairH5Writer
+    a.restart_on, a.restart_why = restart_plan(a)
 
     provenance = {
         "prod": "PyJetscape/example/prod_AuAu_0_10_jet",
@@ -738,7 +757,7 @@ def main() -> int:
         "prod_bulk_info": a.bulk_info,
         **({"prod_particlize_only": True, "prod_jet_leg_read": False}
            if a.particlize_only else {}),
-        **({"prod_music2_restart": True} if a.music2_restart else {}),
+        "prod_music2_restart": a.restart_on,
         **({"pthat_bins": np.asarray(a.pthat_windows, dtype=np.float64),
             "pthat_jets_per_bin": a.jets_per_bin} if a.pthat_windows else {}),
         **({"parton_ymax": a.parton_ymax, "parton_y_mode": a.parton_y_mode}
