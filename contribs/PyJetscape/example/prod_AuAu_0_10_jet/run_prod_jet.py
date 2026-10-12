@@ -158,6 +158,15 @@ def parse_args() -> argparse.Namespace:
                         "shower/ is stored. The particlize file's events/ then have "
                         "ntau_jet_music (MUSIC steps) instead of ntau_jet, no "
                         "frames_identical, and wall_s. Needs --write-particlize")
+    p.add_argument("--music2-restart", action="store_true", dest="music2_restart",
+                   help="MUSIC_2 starts from MUSIC_1's state at the last freeze-out step "
+                        "before the liquefier's tau_delay (no droplet deposits earlier) "
+                        "instead of recomputing the identical leading steps: no string "
+                        "deposition and ~30 fewer steps per jet event, the same output "
+                        "(music4gpu; js-contrib docs/Plans/PLAN_music2_restart.md). An "
+                        "event that does not fit runs from tau0 and says why. "
+                        "MUSIC_RESTART_VERIFY=1 runs every jet leg from tau0 and compares "
+                        "its state with the checkpoint instead")
     p.add_argument("--bulk-info", choices=("slim", "full"), default="slim", dest="bulk_info",
                    help="the background's framework copy, which Matter, LBT and the liquefier "
                         "read: 'slim' (default) keeps e, s, T, vx, vy, vz per cell, ~7 GiB "
@@ -592,6 +601,36 @@ def open_inline(a, jetscape, stem):
     return InlineHadrons(tasks["iSS"], tasks["HadronizationManager"], stem, n_os)
 
 
+def restart_legs(a, jetscape, writer):
+    """--music2-restart: MUSIC_1 keeps a checkpoint at the liquefier's tau_delay, MUSIC_2
+    starts from it.  -> MUSIC_2, or None without the option."""
+    if not a.music2_restart:
+        return None
+    tasks = {t.GetId(): t for t in jetscape.GetTaskList()}
+    bg, jet = tasks[BG_ID], tasks[JET_ID]
+    if not hasattr(jet, "set_restart_from"):
+        sys.exit("run_prod_jet.py: --music2-restart needs a build with "
+                 "MpiMusic.set_restart_from (X-SCAPE + music4gpu music2_restart)")
+    tau = writer.liquefier_tau_delay
+    if not tau:
+        sys.exit("run_prod_jet.py: --music2-restart needs the liquefier: its tau_delay "
+                 "sets where MUSIC_1 keeps its checkpoint")
+    if jet.get_freeze_out_surface() and not bg.get_freeze_out_surface():
+        # the jet leg's surface up to the checkpoint would come from MUSIC_1, which
+        # builds none: every jet leg would run from tau0 anyway
+        print(f"  restart  OFF: {JET_ID} builds the freeze-out surface and {BG_ID} does "
+              "not (--write-particlize jet), so the checkpoint would lack it; use "
+              "--write-particlize both or none")
+        return None
+    bg.set_checkpoint_tau(tau)
+    jet.set_restart_from(bg)
+    print(f"  restart  {JET_ID} starts from {BG_ID}'s state at tau <= {tau:g} fm/c "
+          "(the liquefier's tau_delay)"
+          + (", MUSIC_RESTART_VERIFY: from tau0, compared"
+             if os.environ.get("MUSIC_RESTART_VERIFY") == "1" else ""))
+    return jet
+
+
 def main() -> int:
     a = parse_args()
     for k in ("build", "outdir", "main_xml", "user_xml", "grid"):
@@ -699,6 +738,7 @@ def main() -> int:
         "prod_bulk_info": a.bulk_info,
         **({"prod_particlize_only": True, "prod_jet_leg_read": False}
            if a.particlize_only else {}),
+        **({"prod_music2_restart": True} if a.music2_restart else {}),
         **({"pthat_bins": np.asarray(a.pthat_windows, dtype=np.float64),
             "pthat_jets_per_bin": a.jets_per_bin} if a.pthat_windows else {}),
         **({"parton_ymax": a.parton_ymax, "parton_y_mode": a.parton_y_mode}
@@ -746,6 +786,7 @@ def main() -> int:
     writer.attach(jetscape)                  # after Init: MUSIC_2 -> dump_hydro_only
     if pwriter is not None:
         pwriter.attach(jetscape)             # reads ./music_input: the job's own
+    jet_leg = restart_legs(a, jetscape, writer)  # after both: their surface settings
     inline = open_inline(a, jetscape, stem) if a.validate_inline else None
     gun = open_pthat_bins(a, jetscape)
 
@@ -788,6 +829,8 @@ def main() -> int:
                 late += 1
                 msg += (f"  WARNING: tau0 after tau.min = {grid.tau_min:g}, so the first "
                         "frame(s) of this event are zeros")
+            if jet_leg is not None:
+                msg += f", MUSIC_2 {jet_leg.get_restart_status()}"
             if gun is not None:
                 msg += f", pTHat {d['pthat']:.1f} GeV (window {d['pthat_bin']})"
                 if "parton_y_lead" in d:

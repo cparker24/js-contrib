@@ -576,6 +576,12 @@ class PairH5Writer:
         return n
 
     @property
+    def liquefier_tau_delay(self):
+        """The liquefier's tau_delay [fm/c] (no droplet deposits earlier), or None
+        without a liquefier.  Valid after ``attach()``."""
+        return self._tau_delay if self._liq is not None else None
+
+    @property
     def bg_layout(self):
         """``"full"`` (one arr_bg row per event) or ``"shared"`` (each background once)."""
         return self._bg_layout
