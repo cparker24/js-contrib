@@ -50,6 +50,21 @@ now a smooth, broad, MUSIC-like shape.
 
 ## Residual: a ~13-14% central-rapidity peak, confirmed real
 
+The bulk hydro field itself does not produce this peak at any stage of the
+evolution -- it stays smooth in eta throughout:
+
+![FNO bulk energy density vs. eta at several tau steps, smooth throughout](docs/particlization_investigation/bulk_eta_evolution_event0.png)
+
+That is a genuinely different shape from the final, Cooper-Frye-sampled
+hadron rapidity spectrum (15-FNO-event / 5-MUSIC-event ensemble), which does
+show a real, localized peak at y≈0:
+
+![Final sampled hadron rapidity, FNO vs MUSIC, FNO shows a real central peak](docs/particlization_investigation/final_sampled_rapidity_peak.png)
+
+The contrast between these two plots is the core evidence that the peak is
+introduced at the freeze-out-surface / Cooper-Frye-sampling stage, not
+inherited from the bulk evolution.
+
 Even after the fix, FNO's rapidity spectrum is not perfectly flat at
 midrapidity the way MUSIC's ensemble-averaged spectrum is — it shows a mild,
 statistically robust central peak.
