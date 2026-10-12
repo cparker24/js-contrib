@@ -934,3 +934,64 @@ def test_keep_bits_rounds_both_legs_identically(tmp_path):
     diff = arr - bg
     diff[0, 0, 0, 0] = 0.0
     assert np.all(diff == 0), "arr - arr_bg is exactly zero wherever the legs agree"
+
+
+# ── A1: a reused background is recognised without reading it again ─────────────────
+def _count_resampled(monkeypatch):
+    from jetscape.pair_h5 import PairH5Writer
+
+    calls = []
+    real = PairH5Writer._resampled
+
+    def counting(arr, src, out):
+        calls.append(arr.shape[0])
+        return real(arr, src, out)
+
+    monkeypatch.setattr(PairH5Writer, "_resampled", staticmethod(counting))
+    return calls
+
+
+def _same_files(a, b):
+    with h5py.File(a, "r") as fa, h5py.File(b, "r") as fb:
+        names = []
+        fa.visititems(lambda n, o: names.append(n) if isinstance(o, h5py.Dataset) else None)
+        for n in names:
+            if n.endswith("wall_s"):
+                continue
+            np.testing.assert_array_equal(fa[n][()], fb[n][()], err_msg=n)
+
+
+@pytest.mark.parametrize("store_evolution", [True, False])
+def test_a_reused_background_is_not_read_again(tmp_path, monkeypatch, store_evolution):
+    calls = _count_resampled(monkeypatch)
+    kw = dict(bg_layout="shared", store_evolution=store_evolution)
+    _, wv = _reused_run(tmp_path, "verify", verify_bg_reuse=True, **kw)
+    n_verify = len(calls)
+    calls.clear()
+    path, w = _reused_run(tmp_path, "cached", **kw)
+    assert n_verify == 10                          # both legs, every event
+    assert len(calls) == 5 + 2                     # every jet leg, each background once
+    assert w.last_bg_key == wv.last_bg_key
+    assert w.last_event_diag == wv.last_event_diag
+    if store_evolution:
+        _same_files(path, tmp_path / "verify" / "pair.h5")
+
+
+def test_the_full_layout_still_reads_the_background_every_event(tmp_path, monkeypatch):
+    calls = _count_resampled(monkeypatch)
+    _reused_run(tmp_path, "full", bg_layout="full")
+    assert len(calls) == 10
+
+
+def test_verify_bg_reuse_catches_a_background_its_fingerprint_misses(tmp_path):
+    """The fingerprint takes frames 1, ntau/2 and ntau-1; one differing only in frame 0
+    passes for the same background, and the verification run says so."""
+    bg_evo = _evo(4, 1.0)
+    w, bg, jet, liq = _pair_writer(tmp_path, bg_evo, bg_evo.copy(), bg_layout="shared",
+                                   verify_bg_reuse=True)
+    w.Exec()
+    bg.evo = bg_evo.copy()
+    bg.evo[0] += 1.0
+    jet.evo = bg.evo.copy()
+    with pytest.raises(RuntimeError, match="fingerprint"):
+        w.Exec()
