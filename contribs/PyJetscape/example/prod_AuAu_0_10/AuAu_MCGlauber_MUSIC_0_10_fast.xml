@@ -189,6 +189,9 @@
       <!--When there is a pre-equilibrium stage, and it is kept in memory, this has to be 1-->
       <!--5 x Delta_Tau (0.02, music_input) = 0.1 fm/c between stored frames = the FNO4d dtau-->
       <output_evolution_every_N_timesteps>5</output_evolution_every_N_timesteps>
+      <!-- MUSIC's momentum anisotropy / eccentricity .dat files (four serial passes over
+           every cell per run); nothing reads them in production. -->
+      <output_momentum_anisotropy_vs_etas>0</output_momentum_anisotropy_vs_etas>
       <surface_in_memory>1</surface_in_memory>
       <!--hydro-only dump: keep MUSIC's native store for the Python HDF5 writer, no framework copy-->
       <dump_hydro_only>1</dump_hydro_only>
