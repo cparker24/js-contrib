@@ -894,7 +894,16 @@ liquefier, and the shower manager. `writer.write_diag(idx, wall_s=...)` adds per
 scalars after `Exec()`. Further options: `compression`, `keep_bits`, `tau_stride`,
 `choose_ntau`, `store_droplets`, `store_showers`, `provenance`, and for reused backgrounds
 `bg_layout` (`auto`, `full`, `shared`: one stored background per `bg_id`, with `arr_bg` a
-virtual view of its rows) with `reuse=`.
+virtual view of its rows) with `reuse=`. More options:
+- `store_evolution=False` writes no file but keeps the per-event bookkeeping, for a job that
+  writes only the particlize file.
+- `read_jet=False` on top doesn't read the jet leg, and also tells MUSIC_2 not to store its
+  evolution (`set_store_evolution(False)`, music4gpu).
+- `verify_bg_reuse=True` is a check for tests: it reads and resamples a reused background
+  anyway and raises if its fingerprint matched a different one.
+
+`writer.liquefier_tau_delay` (after `attach()`) is the liquefier's `tau_delay`, where
+`run_prod_jet.py` places MUSIC_1's checkpoint (below).
 
 ### What is written
 
@@ -957,6 +966,38 @@ The main XML default is 1; CPU MUSIC ignores the setting and always builds the s
   although MUSIC's own larger grid holds it. The writer warns, and `n_hit_edge` counts them.
 * **`diag/bg_id`** is the first event that used this background; it repeats under
   `--reuse` (`setReuseHydro`).
+* **A reused background is not read again.** A fingerprint of its raw frames (grid, frame
+  count, frames 1, ntau/2 and ntau−1) recognises it. Its frame hashes and edge maxima then
+  come from the event that first used it (js-contrib 2026-10-11, A1). Only
+  `bg_layout="full"` with a file still reads it every event, to store it in every row.
+
+### The jet leg from the background's state (`set_checkpoint_tau`, `set_restart_from`)
+
+Up to its first droplet, the jet leg is bit-identical to the background, and no droplet
+deposits before the liquefier's `tau_delay`. With music4gpu and X-SCAPE from the
+`music2_restart` branches, MUSIC_2 can start there instead of at τ0:
+
+```python
+bg, jet = tasks["MUSIC_1"], tasks["MUSIC_2"]
+bg.set_checkpoint_tau(writer.liquefier_tau_delay)   # every MUSIC_1 run keeps a checkpoint
+jet.set_restart_from(bg)                            # every MUSIC_2 run starts from it if it fits
+...
+jet.get_restart_status()   # "started from the checkpoint at step 28 (tau = 0.96 fm/c)",
+                           # or "run from tau0: <why>"
+```
+
+- **The checkpoint** is MUSIC_1's state at its last freeze-out step whose RK step ends by
+  τ. That is the GPU state, the surface found so far, the stored frames and the
+  bookkeeping, plus a key of the parameters, the initial arena and the string list.
+- **MUSIC_2 starts from it** only if the key matches, the checkpoint has what MUSIC_2 needs
+  (its surface, its frames), and MUSIC_2's own droplets add nothing before that step.
+  Otherwise it runs from τ0. The output is bit-identical either way.
+- **`MUSIC_RESTART_VERIFY=1`** runs MUSIC_2 from τ0 and compares its state with the
+  checkpoint at the checkpoint's step.
+- **`set_restart_from(None)`** switches it off. CPU MUSIC ignores both setters.
+
+`run_prod_jet.py` does all this by default (`--no-music2-restart` turns it off); see its
+README, *MUSIC_2 from MUSIC_1's state*.
 
 ### Timing (measured)
 

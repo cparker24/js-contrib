@@ -263,6 +263,12 @@ From PyJetscape, `jetscape.fast_h5_bulk.read_fast_h5_bulk(path)` returns each ev
 - **Hydro only.** `dump_hydro_only = 1` leaves the framework medium empty. Adding `<Eloss>`,
   `<SoftParticlization>` or an afterburner would throw, and `run_prod.py` rejects such an XML.
   For soft hadrons from the same physics, use the source XML below with iSS.
+- **MUSIC's anisotropy diagnostic is off.** The XML sets
+  `<output_momentum_anisotropy_vs_etas>0`: no `momentum_anisotropy_*` / `eccentricities_*`
+  `.dat` files, which nothing reads, and no serial pass over the grid at four steps per run.
+  The output is unchanged. Set 1 in a user XML to get them back. Builds older than X-SCAPE
+  `6480dbeb` ignore the tag. The other host-CPU fixes of 2026-10-11 need no setting
+  ([`PLAN_cpu_fixes_A.md`](../../../../docs/Plans/PLAN_cpu_fixes_A.md)).
 - **Native grid.** `--native` ignores the YAML's grid and writes MUSIC's own 100 × 100 × 60
   grid (`max_ntau` still applies). That is about 10 MB per frame, roughly 1 GB per event
   before compression.

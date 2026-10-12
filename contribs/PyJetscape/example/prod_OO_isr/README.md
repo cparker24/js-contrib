@@ -299,6 +299,12 @@ events, CUDA MPS, `OMP_NUM_THREADS` = 20 cores / j (2026-10-10, GB10: 20 cores, 
 
 ## Physics notes and limits
 
+- **MUSIC's anisotropy diagnostic is off.** The XML sets
+  `<output_momentum_anisotropy_vs_etas>0`: no `momentum_anisotropy_*` / `eccentricities_*`
+  `.dat` files, which nothing reads, and no serial pass over the grid at four steps per run.
+  The output is unchanged. Set 1 in a user XML to get them back. Builds older than X-SCAPE
+  `6480dbeb` ignore the tag. The other host-CPU fixes of 2026-10-11 need no setting
+  ([`PLAN_cpu_fixes_A.md`](../../../../docs/Plans/PLAN_cpu_fixes_A.md)).
 - **EOS 9, not BulkFastTest's 91.** With EOS 91 iSS samples the SMASH hadron list and
   leaves the resonance decays to SMASH, which neither the job nor `hadronize.py` runs: ρ, ω,
   K*, Δ, η ... would stay undecayed (`hadronize.py` warns). In a 3-event test (before the

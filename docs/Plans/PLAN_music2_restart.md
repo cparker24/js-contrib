@@ -232,4 +232,11 @@ The GB10 is GPU-limited, so events/h there rise only with the GPU part (28 of ~5
 **Still to do:**
 - Metal: compile and run on the M3 Max.
 - The 3090 box: events/h with the amd64 image.
-- Make `--music2-restart` the default once both are done.
+- **Default on** since the documentation commit (2026-10-11), at the user's request, before
+  the M3 Max and 3090 checks. `--no-music2-restart` turns it off. It is off by itself with
+  `--write-particlize jet` / `--surface jet` and on builds without the restart, decided from
+  the options before the files are opened, so `prod_music2_restart` records what ran. The
+  default run (4 events, `--reuse 2`, `both`) restarted in every event; output identical.
+- Documented in `prod_AuAu_0_10_jet/README.md` (*MUSIC_2 from MUSIC_1's state*),
+  `docs/README_2stage.md` §2, the PyJetscape README, `utils/README_launch.md`, X-SCAPE's README
+  and MUSIC4GPU's README.

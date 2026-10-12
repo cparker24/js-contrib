@@ -139,6 +139,11 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
 
 ### Phase 4: A8, MUSIC_2 starting from MUSIC_1's state
 
+**Status (2026-10-11):** built on branches `music2_restart` and on by default in
+`run_prod_jet.py`. Design, as built and the checks:
+[`PLAN_music2_restart.md`](PLAN_music2_restart.md). The design notes below are the plan
+before it was built.
+
 A short design note comes first. Main decisions:
 - **Checkpoints:** MUSIC_1 keeps 1–3 copies of its state on the GPU (~100 MB each: `snap_prev`,
   `snap_curr`, the source buffer). The first is right after the strings are deposited; the later
