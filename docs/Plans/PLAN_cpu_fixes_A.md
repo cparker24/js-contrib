@@ -1,4 +1,4 @@
-<!-- Plan, written 2026-10-11. Status: phase 1 in progress (branch cpu_fixes_a). -->
+<!-- Plan, written 2026-10-11. Status: phase 1 done on branch cpu_fixes_a (not merged). -->
 
 # Plan: the bit-identical CPU fixes (A1–A9 of REPORT_CPU_GPU.md)
 
@@ -59,6 +59,15 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
 - **A2:** `bulk_sources.resample()` does the three passes as matrix products over contiguous
   memory. A test compares it bit for bit with the `einsum` version, which is kept in the test
   file as the reference.
+  - On the GB10 (one BLAS thread) the `einsum` code takes 11 ms per frame, not the 30–60 ms of
+    the 3090 box. A plain contiguous rewrite was no faster here: the time goes into dense
+    products whose weight matrices are ~96 % zeros, and into new buffers allocated for every
+    frame.
+  - As built: features leading, one matmul per pass into buffers reused for the whole call,
+    and per block of 4 output rows only the source rows it touches. That takes 3.6 ms per
+    frame (3.8 in the prod image), bit-identical (`tests/test_resample.py`).
+  - Still to do: run `tests/test_resample.py` on the 3090 box (x86 OpenBLAS) and on the M3 Max
+    (Accelerate).
 - **A1:** `PairH5Writer._write_event` fingerprints the background from MUSIC_1's native frames
   without resampling them. On a match it reuses the cached hashes, edge maxima and `bg_first`.
   This applies only to the `shared` layout or `store_evolution=False`; `full` still resamples
@@ -66,6 +75,15 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
 - **Validation:** `tests/test_pair_h5.py` and the production regression check
   (`run_prod_jet.py --reuse 2 --write-particlize both`), every dataset compared bit for bit
   (`source/flux` within a tolerance).
+- **Done 2026-10-11 (GB10, branch `cpu_fixes_a`):**
+  - Ran `run_prod_jet.py --events 4 --seed 1 --reuse 2 --write-particlize both` with js-contrib
+    `309bb90` and with the branch. All 38 datasets of the pair file and all 33 of the
+    particlize file are identical; only `prod_wall_s_total` and `file_uuid` differ.
+  - Jet events with a reused background: 16.5 → 14.8 s and 20.4 → 18.0 s. Events with a new
+    background: −1.0 and −1.4 s. User CPU of the job: 370 → 356 s.
+  - The GB10's resampling was already fast, so the gain here is small. The 3090 box, where
+    the report measured 6 s per jet event for the background alone, should gain more; not
+    measured yet.
 
 ### Phase 2: small MUSIC4GPU fixes, plus the switch in X-SCAPE (A3, A4, A5/A6, A7)
 
