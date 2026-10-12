@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Plot energy-density-vs-eta at several tau steps from an
-WriteEtaProfileDiagnostics CSV, to show the raw hydro field stays smooth in
-eta throughout the evolution (no central peak at any stage) -- contrasted
+WriteEtaProfileDiagnostics-format CSV (FnoHydro's own, or MusicWrapper's
+WriteMusicEtaProfileDiagnostic -- same columns, so this script works
+unchanged against either), to show the raw hydro field stays smooth in eta
+throughout the evolution (no central peak at any stage) -- contrasted
 against the final sampled-hadron rapidity spectrum, which does show a
 central peak. Used for PARTICLIZATION_INVESTIGATION.md.
+
+Usage:
+  python3 plot_eta_evolution.py <eta_profile.csv> [out.png] [label]
 """
 import csv
 import sys
@@ -30,9 +35,20 @@ def load_eta_profile(path):
 def main():
     csv_path = sys.argv[1] if len(sys.argv) > 1 else "eta_profile_event0.csv"
     out_png = sys.argv[2] if len(sys.argv) > 2 else "bulk_eta_evolution.png"
+    label = sys.argv[3] if len(sys.argv) > 3 else "FNO"
 
     by_k, taus = load_eta_profile(csv_path)
     ks = sorted(by_k.keys())
+    totals = {k: sum(by_k[k].values()) for k in ks}
+    # Drop any leading steps that are still essentially empty (e.g. MUSIC's
+    # string-formation-time ramp-up, near-zero before tau_form_mean) -- a
+    # step whose total is <5% of the NEXT dumped step's isn't representative
+    # of the field yet.
+    start = 0
+    while (start + 1 < len(ks)
+           and totals[ks[start]] < 0.05 * totals[ks[start + 1]]):
+        start += 1
+    ks = ks[start:]
     # Pick a handful of steps spanning the evolution, skipping any
     # post-freeze-out-cutoff steps (where sum_ed collapses by >90% between
     # consecutive sparse samples -- those are extrapolation noise, not
@@ -40,7 +56,7 @@ def main():
     chosen_ks = []
     prev_total = None
     for k in ks:
-        total = sum(by_k[k].values())
+        total = totals[k]
         if prev_total is not None and total < 0.05 * prev_total:
             break
         chosen_ks.append(k)
@@ -80,7 +96,7 @@ def main():
     mg = ROOT.TMultiGraph()
     for g in graphs:
         mg.Add(g, "LP")
-    mg.SetTitle("FNO bulk energy density vs. eta, several #tau "
+    mg.SetTitle(f"{label} bulk energy density vs. eta, several #tau "
                 "(smooth throughout -- no central peak);"
                 "eta;(x,y)-summed energy density [GeV/fm^{3}]")
     mg.Draw("A")

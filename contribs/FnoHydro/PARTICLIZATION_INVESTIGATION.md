@@ -55,15 +55,24 @@ evolution -- it stays smooth in eta throughout:
 
 ![FNO bulk energy density vs. eta at several tau steps, smooth throughout](docs/particlization_investigation/bulk_eta_evolution_event0.png)
 
+Real MUSIC (same seed, same event) shows the same character -- smooth across
+the whole populated eta range, falling off only at the genuine edges of the
+fireball (|eta| ≳ 5), with no central feature at any tau either:
+
+![MUSIC bulk energy density vs. eta at several tau steps, also smooth throughout](docs/particlization_investigation/music_bulk_eta_evolution_event0.png)
+
 That is a genuinely different shape from the final, Cooper-Frye-sampled
 hadron rapidity spectrum (15-FNO-event / 5-MUSIC-event ensemble), which does
-show a real, localized peak at y≈0:
+show a real, localized peak at y≈0 for FNO:
 
 ![Final sampled hadron rapidity, FNO vs MUSIC, FNO shows a real central peak](docs/particlization_investigation/final_sampled_rapidity_peak.png)
 
-(Plotted with `example/plot_eta_evolution.py <eta_profile_eventN.csv>` and
-`example/plot_final_peak.py <spectra_comparison.root>` respectively --
-rerun against fresh diagnostic output to regenerate or extend these.)
+(Plotted with `example/plot_eta_evolution.py <eta_profile.csv> [out.png] [label]`
+and `example/plot_final_peak.py <spectra_comparison.root>` respectively --
+rerun against fresh diagnostic output to regenerate or extend these. The
+MUSIC-side CSV comes from `MusicWrapper.cc`'s `WriteMusicEtaProfileDiagnostic`
+in the main X-SCAPE repo, which writes the same column format so the same
+script works against either unchanged.)
 
 The contrast between these two plots is the core evidence that the peak is
 introduced at the freeze-out-surface / Cooper-Frye-sampling stage, not
