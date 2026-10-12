@@ -123,11 +123,34 @@ private:
                                    float &max_energy_density_out);
 
   // Diagnostic: writes (tau, hottest-cell energy density, hottest-cell
-  // temperature) for every step k=0..bulk_info.ntau-1 in the finished
-  // `output` tensor to a CSV at out_path -- one row per predicted timestep,
-  // spanning every rollout window. Cheap (tensor max-reductions only, no
-  // extra model calls); safe to leave on unconditionally.
-  void WritePeakTemperatureDiagnostics(const std::string &out_path);
+  // temperature) for every step k=0..full_ntau-1 in the finished `output`
+  // tensor to a CSV at out_path -- one row per predicted timestep, spanning
+  // every rollout window, including steps past the freeze-out cutoff
+  // (see FindFreezeoutCutoff) so the model's full raw behavior stays
+  // inspectable even though bulk_info.ntau is truncated before this is
+  // called. Cheap (tensor max-reductions only, no extra model calls); safe
+  // to leave on unconditionally.
+  void WritePeakTemperatureDiagnostics(const std::string &out_path, int full_ntau);
+
+  // Hottest-cell physical temperature (GeV) at step k of the finished
+  // `output` tensor, matching the denormalization WritePeakTemperatureDiagnostics
+  // and PassHydroEvolutionHistoryToFramework both use.
+  float MaxTemperatureAtStep(const torch::Tensor &flattened, int tau_axis, int k);
+
+  // Scans output step-by-step (k=0..full_ntau-1) for the first tau at which
+  // the hottest cell anywhere in the grid is at/below freezeout_temperature
+  // -- the same per-cell threshold MUSIC itself freezes out at -- and
+  // returns the cutoff length to use for bulk_info.ntau (crossing index + 1,
+  // so the surface finder gets one step at/below threshold to bracket
+  // against, same as MUSIC's own surface construction). Returns full_ntau
+  // unchanged if the evolution never reaches freeze-out within the window
+  // (nothing to truncate). Without this, the model keeps predicting for
+  // the full ntau_fno window regardless of this event's own freeze-out
+  // time, which is where the previously-documented post-freeze-out
+  // dip-and-recover ringing artifact comes from (training targets are
+  // zero-padded past each event's own freeze-out, so the live model is
+  // extrapolating into territory it never saw real targets for).
+  int FindFreezeoutCutoff(int full_ntau);
 
   // neta_fno > 1 selects the full 3D+1 (x,y,eta,tau) pipeline; neta_fno == 1
   // keeps the original boost-invariant 2D+1 (x,y,tau) pipeline byte-for-byte,

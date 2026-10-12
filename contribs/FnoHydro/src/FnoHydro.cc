@@ -360,6 +360,11 @@ void FnoHydro::EvolveHydro() {
 
   hydro_status = INITIALIZED;
 
+  // Full (pre-freeze-out-cutoff) length of `output`, needed again below when
+  // WritePeakTemperatureDiagnostics writes the model's complete raw
+  // prediction even though bulk_info.ntau gets truncated at freeze-out.
+  int full_ntau = 0;
+
   if (hydro_status == INITIALIZED) {
 
     JSINFO << "Running FNO model hydro time evolution prediction ...";
@@ -419,7 +424,16 @@ void FnoHydro::EvolveHydro() {
     JSINFO << tensorShapeInput.c_str() << " (" << window_outputs.size()
            << " rollout window(s))";
 
-    bulk_info.ntau = 1 + ntau_fno * (int) window_outputs.size();
+    full_ntau = 1 + ntau_fno * (int) window_outputs.size();
+    int freezeout_cutoff = FindFreezeoutCutoff(full_ntau);
+    if (freezeout_cutoff < full_ntau) {
+      JSINFO << "Hottest cell reached freezeout_temperature (" << freezeout_temperature
+             << " GeV) at tau = " << (bulk_info.Tau0() + bulk_info.dtau * (freezeout_cutoff - 1))
+             << " fm/c (step " << (freezeout_cutoff - 1) << "/" << (full_ntau - 1)
+             << ") -- truncating the evolution there, matching MUSIC's own freeze-out "
+             << "termination instead of predicting the full window regardless.";
+    }
+    bulk_info.ntau = freezeout_cutoff;
 
     hydro_status = FINISHED;
   }
@@ -436,7 +450,7 @@ void FnoHydro::EvolveHydro() {
 
   static int fno_event_counter = 0;
   WritePeakTemperatureDiagnostics(
-      "peak_temperature_event" + std::to_string(fno_event_counter) + ".csv");
+      "peak_temperature_event" + std::to_string(fno_event_counter) + ".csv", full_ntau);
   ++fno_event_counter;
 
   PassHydroEvolutionHistoryToFramework();
@@ -453,23 +467,45 @@ void FnoHydro::EvolveHydro() {
 
 }
 
-void FnoHydro::WritePeakTemperatureDiagnostics(const std::string &out_path) {
+float FnoHydro::MaxTemperatureAtStep(const torch::Tensor &flattened, int tau_axis, int k) {
+  torch::Tensor step_channel0 = flattened.select(tau_axis, k).select(0, 0);
+  float max_ed = step_channel0.max().item<float>();
+  // DenormalizeEnergyDensity is monotonic increasing in raw (for raw >= 0),
+  // so applying it to the raw max is equivalent to (and cheaper than)
+  // denormalizing every cell and re-maxing. Channel 0 is normalized at
+  // every k, including k==0 (EvolveHydro's input construction applies
+  // NormalizeEnergyDensity to the initial condition too), so this must
+  // run unconditionally whenever a normalization scheme is active --
+  // independent of whether temperature is implicit or an explicit channel.
+  if (energy_density_normalization != "none") {
+    int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
+    max_ed = DenormalizeEnergyDensity(max_ed, bulk_info.Tau0() + bulk_info.dtau * k_local);
+  }
+  return GetTemperatureFromEos(max_ed);
+}
+
+int FnoHydro::FindFreezeoutCutoff(int full_ntau) {
+  torch::Tensor flattened = torch::squeeze(output, 0);
+  int tau_axis = flattened.dim() - 1;
+  for (int k = 0; k < full_ntau; ++k) {
+    float max_T = MaxTemperatureAtStep(flattened, tau_axis, k);
+    if (max_T <= freezeout_temperature) {
+      return k + 1;
+    }
+  }
+  return full_ntau;
+}
+
+void FnoHydro::WritePeakTemperatureDiagnostics(const std::string &out_path, int full_ntau) {
   torch::Tensor flattened = torch::squeeze(output, 0);
   // flattened: [n_features, nx, ny, (neta,) ntau] -- tau is always the last dim.
   int tau_axis = flattened.dim() - 1;
 
   std::ofstream f(out_path);
   f << "k,tau_fm,max_energy_density_GeV_fm3,max_temperature_GeV\n";
-  for (int k = 0; k < bulk_info.ntau; ++k) {
+  for (int k = 0; k < full_ntau; ++k) {
     torch::Tensor step_channel0 = flattened.select(tau_axis, k).select(0, 0);
     float max_ed = step_channel0.max().item<float>();
-    // DenormalizeEnergyDensity is monotonic increasing in raw (for raw >= 0),
-    // so applying it to the raw max is equivalent to (and cheaper than)
-    // denormalizing every cell and re-maxing. Channel 0 is normalized at
-    // every k, including k==0 (EvolveHydro's input construction applies
-    // NormalizeEnergyDensity to the initial condition too), so this must
-    // run unconditionally whenever a normalization scheme is active --
-    // independent of whether temperature is implicit or an explicit channel.
     if (energy_density_normalization != "none") {
       int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
       max_ed = DenormalizeEnergyDensity(max_ed, bulk_info.Tau0() + bulk_info.dtau * k_local);
