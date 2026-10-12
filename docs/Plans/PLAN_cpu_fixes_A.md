@@ -102,6 +102,21 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
   - hydro-only `run_prod.py`, the two-stage regression check and a short O+O run, all bit for bit;
   - timing from `MUSIC_PROFILE` and py-spy on the GB10 (core-s per event);
   - events/h on the 3090 with the amd64 image built by CI.
+- **Done 2026-10-11 (GB10, branches `cpu_fixes_a`):**
+  - Commits: MUSIC4GPU `c8725c9` (A3), `111b14b` (A4), `c211513` (A5/A6), `4d83c10` (A7);
+    X-SCAPE `9762530b`; js-contrib `b05b96d` (production XMLs).
+  - As built, A5/A6 always packs into the store's tail and `madvise`s it to huge pages (not
+    only "if faults remain"). On the GB10 the pinned path is off (shared host memory).
+  - Output bit-identical to the old build: hydro-only Au+Au (3 events, seed 1), O+O (4 events,
+    seed 101: hydro, particlize and in-job jet hadron files), and two-stage Au+Au (4 events,
+    `--reuse 2`, pair and particlize files).
+  - Wall time per job, old → new: hydro-only 38.7 → 32.6 s (CPU 99 → 84 s); O+O 22.0 → 18.7 s;
+    two-stage 108 → 99 s (CPU 356 → 337 s).
+  - Hydro-only MUSIC timers over 3 events:
+    - string fills 100 → 12 (the 4 real ones per event);
+    - freeze-out check 0.93 → 0.016 s;
+    - no GPU → host grid copies (0.94 s before);
+    - 19.8 → 16.4 ms per step.
 
 ### Phase 3: A9 (MUSIC4GPU + X-SCAPE + js-contrib)
 
