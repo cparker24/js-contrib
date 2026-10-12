@@ -123,9 +123,15 @@ int main(int argc, char** argv)
     jetscape->Add(pGun);
     jetscape->Add(hydro);
 
-    // surface sampler
-    // auto iSS = make_shared<iSpectraSamplerWrapper> ();
-    //jetscape->Add(iSS);
+    // Surface sampler: Cooper-Frye particlization from the freeze-out
+    // surface FnoHydro already builds via the inherited
+    // FindAConstantTemperatureSurface() call at the end of EvolveHydro().
+    // No FnoHydro-specific wiring needed -- JetScape's signal manager
+    // connects iSS's GetHydroHyperSurface signal to whatever FluidDynamics
+    // task was Add()'d as the hydro module (FnoHydro here), automatically,
+    // based on task-list membership alone.
+    auto iSS = make_shared<iSpectraSamplerWrapper> ();
+    jetscape->Add(iSS);
 
     auto jlossmanager = make_shared<JetEnergyLossManager> ();
     auto jloss = make_shared<JetEnergyLoss> ();
