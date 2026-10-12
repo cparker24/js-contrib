@@ -85,6 +85,11 @@ settings matter:
 - **`MUSIC_CUDA_SYNC=block`**: the jobs wait for the GPU without spinning a core, ~30 % less
   CPU per event. The image's default is still `auto`.
 - **NJOBS a multiple of 20** keeps all 20 slots busy in the last round.
+- **MUSIC_2 from MUSIC_1's state** (images with the restart, js-contrib `music2_restart`): on
+  by default, ~25 core-s less per jet event with the same output, which matters most on this
+  host-limited machine. `--no-music2-restart` at the end of the launcher's `run_prod_jet.py`
+  options turns it off. Off by itself with `--write-particlize jet`
+  ([README_2stage.md §2](../docs/README_2stage.md#music_2-from-music_1s-state-on-by-default)).
 - Before these changes (image `cu124-cuda-sync-test`), 8 jobs/GPU with particlize peaked at
   ~111 GB (the jobs' first-event peaks coincide); with them, 92 GB. In a first long campaign
   at 10/GPU watch `free -g`; if the peak goes above ~112 GB, use `JOBS_PER_GPU=9`.

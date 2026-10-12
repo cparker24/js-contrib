@@ -285,9 +285,9 @@ training), add `--particlize-only`: the job writes `<stem>_particlize.h5` and th
 pair file. The particlize file holds everything `hadronize.py` and `run_h5toROOT.py` need
 (surfaces, final partons, shower initiators), so nothing downstream changes. MUSIC still runs
 both legs (MUSIC_2 builds the jet surface, Matter/LBT read MUSIC_1's evolution). The pair
-writer still reads and resamples the background, whose hash recognises a reused one
-(`bg_id`, `bg_key`), but not the jet leg: nothing downstream of a particlize file uses its
-evolution. Lost with it: the evolutions, `source/droplets` and the full shower graph
+writer still reads the background, whose hash recognises a reused one (`bg_id`, `bg_key`),
+but not the jet leg: nothing downstream of a particlize file uses its evolution. MUSIC_2
+doesn't even store it (below). Lost with it: the evolutions, `source/droplets` and the full shower graph
 `shower/` (their per-event counts and energies are in the particlize file's `events/`), and
 the per-event jet-leg checks (`frames_identical`: same initial condition, droplets applied),
 so run the validation and null-test jobs of "Checks before a campaign" without the flag.
@@ -310,20 +310,13 @@ docs/Plans/PLAN_slim_bulk_info.md).
 OMP_NUM_THREADS=5 ./run_jobs.sh -j 4 --mps 20 25 0 out_had --write-particlize both --particlize-only
 ```
 
-*Follow-up (not done): MUSIC_2 without its stored evolution.* MUSIC_2 still copies every
-output frame into its in-memory store (8 floats per cell, ~2–2.5 GiB at 0–10%), which only
-the pair file's `arr` needs. With `--particlize-only` nothing reads those frames: the
-surface comes from MUSIC's live state during the run, the droplets are applied during the
-run, and Matter/LBT read MUSIC_1's copy. What is still used is MUSIC's step count and end
-time (`events/ntau_jet_music`, and the jet leg's freeze-out time behind `E_droplets_late`),
-and MUSIC counts those while filling the store (`HydroinfoMUSIC::get_ntau()` is `itaumax`,
-incremented per appended frame). So switching the store off would need a "count, don't
-store" mode: MUSIC4GPU `HydroinfoMUSIC` keeps the tau bookkeeping but skips the cells, an
-X-SCAPE `MusicWrapper` switch for MUSIC_2 only (MUSIC_1 must keep storing for the
-hand-off), its PyJetscape binding, and `run_prod_jet.py` turning it on with
-`--particlize-only` only. Expected: peak ~7.5 → ~5 GiB (estimated from the RSS trace, where
-MUSIC_2's store is resident at the peak), particlize file unchanged. Worth it when memory
-per job limits `-j`.
+**MUSIC_2 stores no evolution with `--particlize-only`** (2026-10-11, A9 of
+docs/Plans/REPORT_CPU_GPU.md). `PairH5Writer.attach` calls `set_store_evolution(False)` on
+MUSIC_2 when it doesn't read the jet leg. MUSIC4GPU then keeps the store's step count and end
+time (`events/ntau_jet_music`, the jet leg's freeze-out time behind `E_droplets_late`) but
+packs and stores no frame (`store_hydro_info_frames 0`). Nothing to set: builds without it
+behave as before. Particlize file bit-identical (checked); on the GB10 peak memory 7.44 →
+7.06 GB, on the 3090 box ~3 s per event less (packing over PCIe; not measured yet).
 
 **Hadronizing the campaign: `run_hadronize.py`.** `hadronize.py` needs only the particlize
 files and an X-SCAPE build with iSS: no GPU, no MUSIC. It runs on one core, one production
@@ -963,6 +956,28 @@ Two more settings matter in a campaign:
 The drivers also set `OPENBLAS_NUM_THREADS=1` unless it is already set: more OpenBLAS threads
 don't speed up the resampling, and their spinning cost 8 % CPU per event.
 
+**Less host CPU per event** (2026-10-11, the bit-identical fixes A1–A9 of
+[`REPORT_CPU_GPU.md`](../../../../docs/Plans/REPORT_CPU_GPU.md); plan and measurements:
+[`PLAN_cpu_fixes_A.md`](../../../../docs/Plans/PLAN_cpu_fixes_A.md)). These need no setting:
+- the writer recognises a reused background without resampling it again (A1);
+- the resampling is ~3× faster (A2);
+- MUSIC4GPU makes no string-source fills for charges it doesn't evolve (A3), packs the stored
+  frames in place into a huge-page store, through pinned memory on discrete GPUs (A5, A6),
+  and does the no-surface edge test on the GPU (A7);
+- MUSIC_2 stores no evolution with `--particlize-only` (A9).
+
+Two have a switch: the production XMLs turn MUSIC's anisotropy diagnostic off (A4, see
+*Potential next steps*), and MUSIC_2 starts from MUSIC_1's state (A8, on by default, see
+[MUSIC_2 from MUSIC_1's state](#music_2-from-music_1s-state-default)).
+
+On the GB10, one job, 4 events with `--reuse 2` and `--write-particlize both`: 115 → 99 s
+without the restart, 93 s with it; job CPU 370 → 239 s. Every output identical.
+
+The campaign setting, `-j 4 --mps` with `--pthat-bins 10-20,20-30,30-40 --jets-per-bin 5`:
+**329 → 381 events/h (+16 %)**, at about half the CPU per event; the GPU is then 89 % busy
+([BENCHMARK_GB10.md](../../../../docs/BENCHMARK_GB10.md#host-cpu-fixes-a1a9-and-the-restart-2026-10-11)).
+The host-limited 3090 box should gain more; that's not measured yet.
+
 Measured on the GB10 with the jet leg frame by frame and the cache: a job alone peaks at
 6.45 GB instead of 7.84 (campaign settings: 6.42 instead of 8.00), at 12 % less CPU per
 event, with bit-identical output. The numbers below predate this.
@@ -996,6 +1011,7 @@ processes keep up with a whole four-job GPU campaign.
 | `--write-particlize {none,jet,both}` | Also write `<stem>_particlize.h5`: the jet leg's surface (`jet`) or both legs' (`both`, the background once per background), plus the final partons. Switches on those legs' surfaces (and their hand-off to the framework) on top of `--surface`. The pair file is unchanged (checked byte for byte). Costs +5.4 s per event for `both` (+13.5 s before MUSIC4GPU `5058545`; measured, below). |
 | `--bulk-info {slim,full}` | The background's framework copy, which Matter, LBT and the liquefier look up. `slim` (default): e, s, T, vx, vy, vz per cell (24 instead of 112 bytes), ~7 GiB less memory at 0–10%, every output byte-identical to `full` (checked). `full`: the whole `FluidCellInfo` (also P; MUSIC's store has no viscous fields or μ's, so those are zero either way), for modules that read more. Sets `<Hydro><MUSIC><slim_bulk_info>`; needs X-SCAPE with it (branch `slim_bulk_info`). |
 | `--particlize-only` | Write only `<stem>_particlize.h5` (and the `.json`), no pair file: no evolution, `source/` or `shower/` is stored, and the jet leg's evolution is not even read (no `frames_identical` checks). ~3 s per event faster, peak 7.5 instead of 8.7 GiB. Needs `--write-particlize`. See *Hadronization input only* in B. |
+| `--music2-restart` (default) / `--no-music2-restart` | MUSIC_2 starts from MUSIC_1's saved state just before the first droplet can deposit, instead of recomputing the identical leading steps: −25 core-s per jet event, the same output. Off by itself with `--write-particlize jet` / `--surface jet` and on builds without it. See [MUSIC_2 from MUSIC_1's state](#music_2-from-music_1s-state-default). |
 | `--validate-inline` | Validation only: also run iSS on the jet leg and Colorless jet hadronization inside the job and store their hadrons and seeds (`<stem>_inline_{bulk_jet,jet_frag}.h5`), for `hadronize.py --use-stored-seeds`. **Changes the jet sample** of the seed (see Seeds below); the background is unchanged. |
 | `--hadronize-xml FILE` | Settings for `--validate-inline` (default `hadronize.xml`). |
 | `--surface {none,bg,jet,both}` | Which legs build MUSIC's freeze-out surface (`<freeze_out_surface>` in the first `<Hydro><MUSIC>` block, i.e. the background and the default, and in MUSIC_2's own block). On its own it produces nothing: only `--write-particlize` hands a surface to the framework and stores it, and it builds its legs itself. So a leg built but not stored costs ~3 s per MUSIC run (~6 s before MUSIC4GPU `5058545`) for no output, and the job warns about it. `none` (default) gives a bit-identical evolution. |
@@ -1208,6 +1224,73 @@ unit with no samples.
   - It also warns if a jet leg that received droplets matches the background completely:
     MUSIC ignored the liquefier.
 
+## MUSIC_2 from MUSIC_1's state (default)
+
+The jet leg (MUSIC_2) starts from the same initial condition as the background (MUSIC_1) and
+stays bit-identical to it until its first droplet deposits: `diag/frames_identical` counts
+those frames. A CausalLiquefier droplet deposits in the step that contains
+τ_drop + τ_delay, so nothing deposits before `tau_delay` (1 fm/c here), ~30 of ~500 steps.
+Since 2026-10-11 (A8 of docs/Plans/REPORT_CPU_GPU.md; design and checks:
+[`PLAN_music2_restart.md`](../../../../docs/Plans/PLAN_music2_restart.md)) MUSIC_2 doesn't
+recompute them:
+
+1. **MUSIC_1 keeps a checkpoint.** In every run, at the last freeze-out step before
+   `tau_delay` (step 28, τ = 0.96 fm/c), MUSIC_1 keeps a copy of its state. That is:
+   - the GPU state (96 MB, a copy on the GPU);
+   - the freeze-out surface found so far (~77,000 cells);
+   - the stored frames (6 frames, 109 MB of host memory);
+   - the bookkeeping;
+   - a key of everything the evolution depends on.
+2. **MUSIC_2 starts there**, for every jet on that background (with `--reuse`/`--pthat-bins`,
+   for all of them). It does so only if three things hold:
+   - the key matches: the parameters, the initial arena and the string list;
+   - the checkpoint has what MUSIC_2 needs (the surface, the frames);
+   - MUSIC_2's own droplets add nothing before that step. This is tested with the same
+     per-step test MUSIC uses.
+
+   Otherwise MUSIC_2 runs from τ0 as before, and the log says why.
+3. **Saving:** no string deposition in MUSIC_2 and 28 fewer GPU steps per jet event. GB10,
+   4 events, `--reuse 2`: job CPU 337 → 239 core-s (−25 core-s per jet event), wall −6 %.
+4. **Output:** bit-identical. Checked:
+   - pair and particlize files with `--write-particlize both`;
+   - `--particlize-only`;
+   - the discrete-GPU path;
+   - hydro-only and O+O unchanged.
+
+   `diag/frames_identical` keeps its meaning. With the restart, the leading frames are
+   MUSIC_1's by construction, and the key check replaces the "same initial condition" test
+   these frames used to provide.
+
+**Turning it off:** `--no-music2-restart` (after OUTDIR for `run_jobs.sh`, or in `EXTRA_ARGS`).
+It switches itself off, and the job says so at the start (`restart  OFF: …`), in two cases:
+- **`--write-particlize jet` / `--surface jet`.** MUSIC_2 builds a surface and MUSIC_1
+  doesn't, so the checkpoint would lack the jet leg's early surface. Use
+  `--write-particlize both` (or none) to get the restart.
+- **A build without it**: X-SCAPE and MUSIC4GPU before `music2_restart`.
+
+The files record the setting in `prod_music2_restart`.
+
+**In the log:**
+- at the start: `restart  MUSIC_2 starts from MUSIC_1's state at tau <= 1 fm/c (the
+  liquefier's tau_delay)`;
+- per MUSIC_1 run: `Checkpoint at step 28, tau = 0.96 fm/c: GPU state 96 MB, … surface
+  cells, 6 frames (109 MB).`;
+- per event: `…, MUSIC_2 started from the checkpoint at step 28 (tau = 0.96 fm/c)`, or
+  `MUSIC_2 run from tau0: <reason>`.
+
+**Checking it:** `MUSIC_RESTART_VERIFY=1` runs every jet leg from τ0 instead, and compares its
+state at the checkpoint's step with the checkpoint, bit for bit:
+- the GPU state;
+- the surface;
+- max e and the counters;
+- the frames.
+
+Each event logs `restart verify at step 28: identical to the checkpoint` or what differs.
+The output is that of a run without the restart.
+
+**Cost:** ~100 MB of GPU memory and ~110 MB of host memory per job, held from one background
+to the next.
+
 ## Choices worth knowing
 
 - **`<CausalLiquefier><dtau>` must equal MUSIC's `Delta_Tau`** (0.02 in `music_input`). The
@@ -1290,49 +1373,29 @@ in-job hadrons it compares against are full precision.
    difference sits along the droplets (PairBrowser plot).
 3. CPU vs GPU, same seed, small grid (`MUSIC_FORCE_CPU=1` runs music4gpu's CPU path): the Δe
    maps agree.
+4. The restart (default): one job with `MUSIC_RESTART_VERIFY=1`. Every event must log
+   `restart verify at step N: identical to the checkpoint`, and a job without it
+   (`--no-music2-restart`) must write the same files.
 
 ## Potential next steps
 
-### Switch off MUSIC's momentum-anisotropy output
+### MUSIC's momentum-anisotropy output: off in production (done 2026-10-11)
 
-On hold. Measured in [BENCHMARK_GB10.md](../../../../docs/BENCHMARK_GB10.md).
+MUSIC4GPU wrote these diagnostics unconditionally. They are a scan of the whole grid at four
+early steps of every MUSIC run (`it = iFreezeStart`, `+10`, `+30`, `+50`), plus a
+GPU → host copy before each. They went into `momentum_anisotropy_tau_X.dat`,
+`eccentricities_evo_{ed,nB,nQ}_tau_X.dat` and `meanpT_estimators_tau_X.dat`, 20 files per
+MUSIC leg, overwritten by every event and job. Nothing in X-SCAPE, js-contrib or FNO4d reads
+them.
 
-**What the code does now.** MUSIC4GPU writes these diagnostics unconditionally
-(`evolve.cpp:202`, `Cell_info::output_momentum_anisotropy_vs_etas` in `grid_info.cpp`).
+**The switch** (A4 of docs/Plans/REPORT_CPU_GPU.md):
+- MUSIC4GPU parameter `output_momentum_anisotropy_vs_etas` (default 1).
+- X-SCAPE `<Hydro><MUSIC><output_momentum_anisotropy_vs_etas>` (default 1 in
+  `jetscape_main.xml`, and 1 when the tag is missing).
 
-- **When:** at four time steps, `it = iFreezeStart`, `+10`, `+30` and `+50`.
-  `iFreezeStart` is where the freeze-out check starts, which with string sources is
-  shortly after the last string deposits. So these are **early times**: τ ≈ 0.46, 0.66,
-  1.06 and 1.46 fm/c in our runs.
-- **What it computes:** a scan of the whole grid at each η slice, written to five files
-  per step:
-  - `momentum_anisotropy_tau_X.dat`: ε_p vs η_s, from the ideal, ideal + shear, and full
-    T^μν;
-  - `eccentricities_evo_{ed,nB,nQ}_tau_X.dat`: ε_n (n = 1–6) vs η;
-  - `meanpT_estimators_tau_X.dat`.
-- **Volume:** 20 files per MUSIC leg, 40 per pair event.
-- **On the GPU path:** before each of these steps, the current grid (primitives and
-  W^μν) is copied back to the host (`sync_curr_from_gpu_readonly`).
-
-**What omitting it would change:**
-
-| | Effect |
-|---|---|
-| Hydro evolution and h5 output | None. The copy is read-only (the GPU keeps the authoritative state) and the analysis only reads the grid. |
-| Time | About 1–1.5 s per event, ~3 % of the 38–47 s an event takes after the `hydro_data_optim` changes: full-grid loops at 4 steps × 2 legs plus the GPU→host copies. |
-| Files lost | The 40 files per event. They are named by τ only and written into the working directory (`build_gpu`), so each event overwrites the previous one, MUSIC_2 overwrites MUSIC_1, and concurrent jobs overwrite each other. After a campaign they hold whatever the last writer left. |
-| Who reads them | Nothing in X-SCAPE, js-contrib or FNO4d. MUSIC4GPU's own `tests/testIPGlasma2D/TestOutputFiles.py` expects them, so standalone MUSIC should keep the output on by default. |
-
-**What it would take.** The same three-repo pattern as `<freeze_out_surface>`:
-
-1. **MUSIC4GPU:** a parameter `output_momentum_anisotropy` (default 1), read from the
-   input file and settable through `set_parameter`, gating that one block in
-   `evolve.cpp`.
-2. **X-SCAPE `MusicWrapper`:** read `<output_momentum_anisotropy>` from the XML
-   (global or per MUSIC instance) and pass it with `set_parameter`. It should not go
-   through `music_input`, which MUSIC reads through its slow per-parameter `StringFind4`
-   (and which was shared between jobs before the per-job working directories).
-3. **js-contrib:** set it to 0 in the production XMLs.
+The production XMLs (this one, `prod_AuAu_0_10`, `prod_OO_isr`) set it to **0**: ~1–1.5 s
+per event less, output unchanged. Standalone MUSIC keeps writing them; its own tests expect
+the files. Set `1` in the user XML to get them back.
 
 **If the numbers are wanted per event.** Store them in the h5 (e.g. `diag/`) rather than
 in these files. Part of it can also be computed afterwards from `arr`: ε_n of the energy

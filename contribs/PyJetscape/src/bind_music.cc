@@ -128,6 +128,26 @@ void bind_music(py::module_ &m) {
            "get_native_ntau) but no cells: for an instance whose evolution "
            "nobody reads.  music4gpu; CPU MUSIC ignores it.",
            py::arg("store"))
+      .def("get_checkpoint_tau", &MpiMusic::get_checkpoint_tau,
+           "tau [fm/c] by which this instance keeps a checkpoint of its state "
+           "in every evolution (0: off).")
+      .def("set_checkpoint_tau", &MpiMusic::set_checkpoint_tau,
+           "Keep a checkpoint of this instance's state in every evolution, at "
+           "the last freeze-out step whose RK step ends by tau [fm/c] (0: "
+           "off), for another instance to start from (set_restart_from).  "
+           "music4gpu; CPU MUSIC ignores it.",
+           py::arg("tau"))
+      .def("set_restart_from", &MpiMusic::set_restart_from,
+           "Start every evolution of this instance from `other`'s latest "
+           "checkpoint when it fits (same parameters, initial arena and "
+           "initial-state source, no droplet before its step), from tau0 "
+           "otherwise: the output is the same either way.  None: always from "
+           "tau0.  MUSIC_RESTART_VERIFY=1 runs from tau0 and compares the "
+           "state with the checkpoint at its step.  music4gpu; CPU MUSIC "
+           "ignores it.",
+           py::arg("other"))
+      .def("get_restart_status", &MpiMusic::get_restart_status,
+           "What the last evolution did with set_restart_from ('' if not set).")
       .def("get_hit_grid_boundary", &MpiMusic::get_hit_grid_boundary,
            "True if the last evolution stopped because the freeze-out "
            "surface reached the transverse grid boundary (MUSIC's "

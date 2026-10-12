@@ -86,13 +86,15 @@ themselves (variants, building, testing) in
   | GPU fix for stalled evolutions ([`VacReset_BUG.md`](https://github.com/jhputschke/MUSIC4GPU/blob/XSCAPE/docs/VacReset_BUG.md)) | X-SCAPE `9509aea2` or later (in every published image) |
   | edge flag (`diag/{bg,jet}_hit_edge`) | js-contrib `main` `20109af` or later |
   | 64 × 64 × 32 output grid by default | js-contrib `main` `c8b682d` or later |
+  | less host CPU per event, bit-identical (A1–A7, A9 of [`REPORT_CPU_GPU.md`](Plans/REPORT_CPU_GPU.md)): MUSIC's anisotropy diagnostic off, no jet-leg store with `--particlize-only` | X-SCAPE `contrib` `6480dbeb` (MUSIC4GPU `943b089`) and js-contrib `main` `a9dd328` or later |
+  | MUSIC_2 from MUSIC_1's state, on by default ([§2](#music_2-from-music_1s-state-on-by-default)) | X-SCAPE, MUSIC4GPU and js-contrib `music2_restart` (until merged) |
 
 ### Memory, cores, disk
 
 | per production job (stage 1) | |
 |---|---|
 | **host memory** | **~9 GB peak** per job alone (images with X-SCAPE `cbc72639` or later; older ones ~20 GB): 8.7 GiB with the pair file, 7.5 GiB with `--particlize-only` (GB10, seed 1; X-SCAPE `contrib` from `cbc72639`, js-contrib `main` from `9356bf4`). It was ~20 GB before the memory fixes and is 14.3 GiB with `--bulk-info full` ([PLAN_slim_bulk_info.md](Plans/PLAN_slim_bulk_info.md)). Most of it is the background's hydro history, kept in memory for Matter/LBT, now as a slim 6-field copy. Several jobs: **4 at once used 29 GB** on the GB10 (66–71 GB before the fixes; [BENCHMARK_GB10.md](BENCHMARK_GB10.md#with-the-memory-fixes-2026-10-03)). **Plan for ~12 GB per job** (~16 GB with `--bulk-info full`). |
-| GPU memory | a few hundred MB: a 16 GB V100 is plenty |
+| GPU memory | a few hundred MB, +~100 MB for the restart's checkpoint ([§2](#music_2-from-music_1s-state-on-by-default)): a 16 GB V100 is plenty |
 | CPU cores | ~5 per job (`OMP_NUM_THREADS=5`) |
 | time | ~30–50 s per event and job, depending on GPU and CPU |
 | disk | ~285 MB per event (hydro pair) + ~154 MB (`--write-particlize both`), measured on the earlier 65 × 65 × 33 output grid; the 64 × 64 × 32 default has 6% fewer cells per frame |
@@ -197,6 +199,34 @@ Everything runs `run_jobs.sh` from the production folder
   are redone.
 - **Hadronization input:** add **`--write-particlize both`** to every stage-1 command that
   should later get hadrons.
+
+### MUSIC_2 from MUSIC_1's state (on by default)
+
+In images with the restart (§1), the jet leg doesn't recompute the background's first steps.
+- **Why it works:** up to the first droplet the two legs are bit-identical, and no droplet
+  deposits before the liquefier's `tau_delay` (1 fm/c).
+- **What happens:** MUSIC_1 keeps a checkpoint of its state there, once per background.
+  MUSIC_2 starts from it for every jet on that background.
+- **What it saves:** the string deposition and ~30 GPU steps per jet event, ~25 core-s per jet
+  event.
+- **What doesn't change:** the output, bit for bit.
+
+Details and the checks:
+[`prod_AuAu_0_10_jet/README.md`](../contribs/PyJetscape/example/prod_AuAu_0_10_jet/README.md#music_2-from-music_1s-state-default).
+
+- **Turning it off:** `--no-music2-restart` after OUTDIR (`run_jobs.sh … OUTDIR
+  --no-music2-restart`), or in `EXTRA_ARGS` for the SLURM script. Older images don't know the
+  option ("unrecognized arguments"): they run without the restart anyway.
+- **When it switches itself off:**
+  - with `--write-particlize jet` (MUSIC_1 then builds no surface, so the checkpoint would lack
+    the jet leg's early surface);
+  - on builds without it.
+
+  The job says so at the start (`restart  OFF: …`). Use `--write-particlize both` for a
+  campaign that should get it.
+- **Checking it:** run one job with `MUSIC_RESTART_VERIFY=1` (`-e` / `--env`). Every jet leg
+  then runs from τ0, and the log compares its state with the checkpoint (`restart verify at
+  step 28: identical to the checkpoint`).
 
 ### Docker (workstation, cloud VM)
 
@@ -379,6 +409,9 @@ In a job log, `OUTDIR/<stem>.log`:
 | `… the freeze-out surface reached the transverse grid boundary, so MUSIC stopped it early` | MUSIC's own grid (`<IS><grid_max_x>`, ±15 fm) is too small: that event's evolution is truncated (`diag/{bg,jet}_hit_boundary`) |
 | `kernel launch '…' failed: no kernel image is available` | the image has no code for this GPU (e.g. a V100 with an image without sm_70, which includes the published `cu126` until the rebuild, §1). **Discard the output** and use an image with sm_70 (`cu124-20261003-cbc7263` for now) |
 | `WARNING: NOT in effect … export OMP_WAIT_POLICY=passive` | set `OMP_WAIT_POLICY=passive` before launching |
+| `restart  MUSIC_2 starts from MUSIC_1's state at tau <= 1 fm/c` (at the start); per event `…, MUSIC_2 started from the checkpoint at step 28 (tau = 0.96 fm/c)` | the restart is on and used ([§2](#music_2-from-music_1s-state-on-by-default)) |
+| `restart  OFF: …` (at the start) | the restart is off, for the reason given: `--no-music2-restart`, `--write-particlize jet`, or a build without it |
+| per event `MUSIC_2 run from tau0: <reason>` | this event's jet leg did not fit the checkpoint and ran from τ0, with the same result. Rare; frequent ones point to a setup problem (troubleshooting) |
 
 Each job also writes `<stem>.json` (seed, events written, settings, `events_hit_edge`), and
 the campaign ends with `OUTDIR/run_jobs.finished`.
@@ -715,6 +748,9 @@ wake.
 | `pelican: command not found` | the published `cu126`/`cu130` predate Pelican: use `cu124`, or move the files from the host (§5) until the rebuild |
 | many `hit_edge` warnings | the output grid is too small for this system: a larger x/y range in the grid YAML (§1, *Output grid*) |
 | files with different `arr` shapes in one campaign | jobs ran with different grids (an older image's default vs. the new one): keep one grid per campaign |
+| `MUSIC_2 run from tau0: the runs differ in <field>` in every event | the two legs' MUSIC settings differ in that field (e.g. a setting changed for one leg only), so MUSIC_2 can't start from MUSIC_1's state. The output is still right, only slower; make them agree, or `--no-music2-restart` |
+| `MUSIC_2 run from tau0: the jet source deposits at step k …` | a droplet before the checkpoint (a `tau_delay` smaller than the one the checkpoint was placed at): harmless, that event runs in full |
+| `unrecognized arguments: --no-music2-restart` | the image predates the restart and runs without it: drop the option |
 | a failed job | its `OUTDIR/<stem>.log`; rerun the same command (finished jobs are skipped) |
 
 ## 8. O+O with initial-state radiation (`prod_OO_isr`)

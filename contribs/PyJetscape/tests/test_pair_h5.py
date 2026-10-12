@@ -1000,3 +1000,12 @@ def test_verify_bg_reuse_catches_a_background_its_fingerprint_misses(tmp_path):
     jet.evo = bg.evo.copy()
     with pytest.raises(RuntimeError, match="fingerprint"):
         w.Exec()
+
+
+def test_liquefier_tau_delay_is_read_at_attach(tmp_path):
+    """run_prod_jet.py --music2-restart puts MUSIC_1's checkpoint there."""
+    from jetscape.pair_h5 import PairH5Writer
+
+    w, *_ = _pair_writer(tmp_path, _evo(3, 1.0), _evo(3, 1.0))
+    assert w.liquefier_tau_delay == 0.2                  # _Liq.params()
+    assert PairH5Writer(tmp_path / "x.h5").liquefier_tau_delay is None   # not attached

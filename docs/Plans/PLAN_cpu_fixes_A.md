@@ -66,8 +66,9 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
   - As built: features leading, one matmul per pass into buffers reused for the whole call,
     and per block of 4 output rows only the source rows it touches. That takes 3.6 ms per
     frame (3.8 in the prod image), bit-identical (`tests/test_resample.py`).
-  - Still to do: run `tests/test_resample.py` on the 3090 box (x86 OpenBLAS) and on the M3 Max
-    (Accelerate).
+  - `tests/test_resample.py` passed on the M3 Max (2026-10-11, with the M3 test of
+    `PLAN_music2_restart.md`) and on the 3090 box's x86 OpenBLAS (2026-10-12,
+    [`BENCHMARK_2x3090.md`](../BENCHMARK_2x3090.md#music2restart)).
 - **A1:** `PairH5Writer._write_event` fingerprints the background from MUSIC_1's native frames
   without resampling them. On a match it reuses the cached hashes, edge maxima and `bg_first`.
   This applies only to the `shared` layout or `store_evolution=False`; `full` still resamples
@@ -101,7 +102,8 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
 - **Validation:**
   - hydro-only `run_prod.py`, the two-stage regression check and a short O+O run, all bit for bit;
   - timing from `MUSIC_PROFILE` and py-spy on the GB10 (core-s per event);
-  - events/h on the 3090 with the amd64 image built by CI.
+  - events/h on the 3090 with the amd64 image built by CI: done 2026-10-12 with
+    `cu124-music2restart` (A1–A9), see [`BENCHMARK_2x3090.md`](../BENCHMARK_2x3090.md#music2restart).
 - **Done 2026-10-11 (GB10, branches `cpu_fixes_a`):**
   - Commits: MUSIC4GPU `c8725c9` (A3), `111b14b` (A4), `c211513` (A5/A6), `4d83c10` (A7);
     X-SCAPE `9762530b`; js-contrib `b05b96d` (production XMLs).
@@ -138,6 +140,11 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
     identical to the phase 1 baseline, and MUSIC_2 still stores its evolution.
 
 ### Phase 4: A8, MUSIC_2 starting from MUSIC_1's state
+
+**Status (2026-10-11):** built on branches `music2_restart` and on by default in
+`run_prod_jet.py`. Design, as built and the checks:
+[`PLAN_music2_restart.md`](PLAN_music2_restart.md). The design notes below are the plan
+before it was built.
 
 A short design note comes first. Main decisions:
 - **Checkpoints:** MUSIC_1 keeps 1–3 copies of its state on the GPU (~100 MB each: `snap_prev`,
