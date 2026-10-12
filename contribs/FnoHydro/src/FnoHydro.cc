@@ -109,12 +109,19 @@ void FnoHydro::InitializeHydro(Parameter parameter_list) {
   JSINFO << "Initialize FnoHydro ...";
   VERBOSE(8);
 
-  //*************************************************************************************************
-  //REMARK: Somehow no real improvment when using more threads for tensor and model operations !????
-  //*************************************************************************************************
-
-  // For testing now, overwrites the env settings ...
-  torch::set_num_threads(1);
+  // The previous unconditional torch::set_num_threads(1) here overrode
+  // OMP_NUM_THREADS (the same env var MUSIC's own threading already
+  // respects elsewhere in this project) regardless of what the caller
+  // wanted. Measured directly: the model's forward() call alone takes
+  // ~31s single-threaded vs ~7.7s at 24 threads on a 24-physical-core/
+  // 48-logical-thread (SMT) machine -- a real ~4x speedup, contradicting
+  // the old comment's claim of "no real improvement". Going past the
+  // physical core count to the full 48 logical (SMT) threads is slightly
+  // *worse* (~8.3s) from oversubscription overhead, not better, so the
+  // right default is physical cores, not hardware_concurrency(). Leaving
+  // thread count under the caller's control (via OMP_NUM_THREADS, unset =
+  // LibTorch's own default) rather than hardcoding a value here, since the
+  // right number is a property of the deployment machine, not the model.
   JSINFO << "Number of threads (libtorch OMP): " << torch::get_num_threads();
   JSINFO << "Default device: " << device; // << std::endl;
 
