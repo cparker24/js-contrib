@@ -61,6 +61,10 @@ show a real, localized peak at y≈0:
 
 ![Final sampled hadron rapidity, FNO vs MUSIC, FNO shows a real central peak](docs/particlization_investigation/final_sampled_rapidity_peak.png)
 
+(Plotted with `example/plot_eta_evolution.py <eta_profile_eventN.csv>` and
+`example/plot_final_peak.py <spectra_comparison.root>` respectively --
+rerun against fresh diagnostic output to regenerate or extend these.)
+
 The contrast between these two plots is the core evidence that the peak is
 introduced at the freeze-out-surface / Cooper-Frye-sampling stage, not
 inherited from the bulk evolution.
