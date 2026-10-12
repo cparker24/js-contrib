@@ -31,6 +31,7 @@
 #include "JetEnergyLoss.h"
 #include "JetEnergyLossManager.h"
 #include "JetScapeWriterStream.h"
+#include "JetScapeWriterFinalStateStream.h"
 #include "JetScapeSignalManager.h"
 #ifdef USE_HEPMC
 #include "JetScapeWriterHepMC.h"
@@ -160,6 +161,19 @@ int main(int argc, char** argv)
     auto writer= make_shared<JetScapeWriterAscii> (fName);
     jetscape->Add(writer);
 
+    // Flat (index pid pstat E px py pz) per-event hadron list -- covers both
+    // the jet-shower hadronization output and iSS's sampled soft hadrons
+    // (same Write(weak_ptr<Hadron>) path JetScapeWriterAscii uses), without
+    // the full event-record/parton-shower overhead. Used for the bulk
+    // particle-spectra comparison against the MUSIC sibling run.
+    string fNameFinalState = fName;
+    if (fNameFinalState.size() >= 4 &&
+        fNameFinalState.compare(fNameFinalState.size() - 4, 4, ".dat") == 0)
+      fNameFinalState.resize(fNameFinalState.size() - 4);
+    fNameFinalState += "_final_state_hadrons.dat";
+    auto finalStateWriter = make_shared<JetScapeWriterFinalStateHadronsAscii>();
+    finalStateWriter->SetOutputFileName(fNameFinalState);
+    jetscape->Add(finalStateWriter);
 
     jetscape->Init();
     jetscape->Exec();

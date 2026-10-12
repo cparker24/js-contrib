@@ -27,6 +27,7 @@
 #include "JetEnergyLoss.h"
 #include "JetEnergyLossManager.h"
 #include "JetScapeWriterStream.h"
+#include "JetScapeWriterFinalStateStream.h"
 #include "JetScapeSignalManager.h"
 #ifdef USE_HEPMC
 #include "JetScapeWriterHepMC.h"
@@ -39,6 +40,7 @@
 #include "MusicWrapper.h"
 #include "NullPreDynamics.h"
 #include "PGun.h"
+#include "iSpectraSamplerWrapper.h"
 #include "HadronizationManager.h"
 #include "Hadronization.h"
 #include "ColorlessHadronization.h"
@@ -90,6 +92,14 @@ int main(int argc, char** argv)
     jetscape->Add(pGun);
     jetscape->Add(hydro);
 
+    // Surface sampler: Cooper-Frye particlization from MUSIC's own
+    // freeze-out surface (surface_in_memory=1 in the <MUSIC> XML block).
+    // Mirrors fnoHydroLiveTest3D.cc's iSS wiring, so the two arms produce
+    // directly comparable sampled-hadron output for the same initial
+    // conditions (matched <Random><seed>).
+    auto iSS = make_shared<iSpectraSamplerWrapper> ();
+    jetscape->Add(iSS);
+
     auto jlossmanager = make_shared<JetEnergyLossManager> ();
     auto jloss = make_shared<JetEnergyLoss> ();
     auto matter = make_shared<Matter> ();
@@ -112,6 +122,17 @@ int main(int argc, char** argv)
 
     auto writer= make_shared<JetScapeWriterAscii> (fName);
     jetscape->Add(writer);
+
+    // Flat (index pid pstat E px py pz) per-event hadron list -- see
+    // fnoHydroLiveTest3D.cc for why this is added alongside the full writer.
+    string fNameFinalState = fName;
+    if (fNameFinalState.size() >= 4 &&
+        fNameFinalState.compare(fNameFinalState.size() - 4, 4, ".dat") == 0)
+      fNameFinalState.resize(fNameFinalState.size() - 4);
+    fNameFinalState += "_final_state_hadrons.dat";
+    auto finalStateWriter = make_shared<JetScapeWriterFinalStateHadronsAscii>();
+    finalStateWriter->SetOutputFileName(fNameFinalState);
+    jetscape->Add(finalStateWriter);
 
     jetscape->Init();
     jetscape->Exec();
