@@ -410,3 +410,203 @@ All jobs completed: `events_written` and `particlize_events_written` equal the e
     60 jobs × 45 events = 2,700 events in 3 rounds of 20 jobs: ~3 h, ~0.6 TB ([README_launch.md](../utils/README_launch.md#10-jobs-per-gpu)).
 
 Raw data on this machine: `~/prod_test/bench/memtest_20261010/` (`REPORT.md`, `summary.jsonl`, per-run monitor and job logs, `correctness.txt`); launcher copy `~/prod_test/launch_2gpu_memtest.sh`.
+
+<a id="music2restart"></a>
+## The CPU fixes A1–A9 and the MUSIC_2 restart: `cu124-music2restart` (2026-10-12)
+
+The question: how many more events/h do the bit-identical CPU fixes give on this machine at the campaign setting? They are A1–A9 of [REPORT_CPU_GPU.md](Plans/REPORT_CPU_GPU.md) §5. A8 is MUSIC_2 starting from MUSIC_1's state at the last freeze-out step before the liquefier's τ_delay. The comparison is with the 10-jobs-per-GPU numbers of 2026-10-11: 796 events/h, and 917 with `--particlize-only`.
+
+**Images:**
+
+| | image | X-SCAPE | MUSIC4GPU | js-contrib |
+|---|---|---|---|---|
+| old | `xscape-prod:cu124` = `cu124-20261011-84df104`, `066094dfcb4f` | `84df104` | `bc8543a` | `8765281` |
+| new | `xscape-prod:cu124-music2restart`, `d4acf127186f` (built 2026-10-12 04:09 UTC) | `f72a42b` | `9550fc9` | `02bed42`: 9 commits that `main` (`a9dd328`) doesn't have yet |
+
+**Setup**
+- **Same settings as `launch_2gpu.sh`:** one container per GPU, `run_jobs.sh -j 10 --mps --stagger 12`, `OMP_THREADS=3`, `OMP_WAIT_POLICY=passive`, `MUSIC_CUDA_SYNC=block`, and `LBT_TABLE_CACHE=/work/lbt_cache/lbt_tables_v1.bin`.
+  - The runs were started by `run_auau.sh`: the same `docker run` and the same flags as the launcher, plus the monitors of the 2026-10-11 runs.
+- **Two-stage runs:** 20 jobs × 15 events (seeds 1–20) at the campaign setting: `--pthat-bins 10-20,20-30,30-40 --jets-per-bin 5 --parton-ymax 0.6 --write-particlize both`, so one background per job.
+- **Hydro-only run:** `prod_AuAu_0_10`, 12 jobs/GPU, `OMP_THREADS=2`, 24 jobs × 6 events.
+- **Baselines:** `jetc_j10_2gpu`, `jetq_j10_2gpu` and `norm_j12_2gpu` of 2026-10-11 (`bench/auau_prof_20261011/`), with the same seeds and the same settings.
+- **events/h by makespan** (events × 3600 / makespan), as for every staggered run; the per-event rate is in parentheses. CPU from cgroup `cpu.stat`, GPU busy from `nvidia-smi dmon`. GPU-s/event = mean SM busy × 2 GPUs × 3600 / events/h.
+- **Restart switched on:** every two-stage job logged `restart  MUSIC_2 starts from MUSIC_1's state at tau <= 1 fm/c`, and one `Checkpoint at step 28, tau = 0.96 fm/c: GPU state 96 MB, 76994 surface cells, 6 frames (109 MB)`.
+  - All 600 jet legs of the two restart runs (and all 30 of the single jobs) logged `started from the checkpoint at step 28`. None fell back to τ0.
+  - `--no-music2-restart` after OUTDIR (run `jetrn`) logged `restart  OFF: --no-music2-restart` in every job.
+
+**Throughput, 2 GPUs:**
+
+| production | image | events/h makespan (per event) | change | s/event in a job | core-s/event | threads busy (of 48) | GPU0 / GPU1 busy | GPU-s/event | host peak | per-job VmHWM, mean [max] | VRAM/GPU |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| two-stage campaign, 10/GPU | old | 796 (927) | | 77.8 | 116.6 | 26.6 | 66 / 67 % | 6.00 | 103.8 GB | 6.10 [6.70] GB | 8.1 GB |
+| | new, `--no-music2-restart` (A1–A7) | 965 (1,123) | +21 % | 64.2 | 100.5 | 27.6 | 72 / 72 % | 5.40 | 96.0 GB | 5.91 [6.49] GB | 8.1 GB |
+| | **new** (A1–A8) | **1,121 (1,299)** | **+41 %** | 55.5 | **62.3** | 20.1 | 83 / 82 % | 5.29 | 100.6 GB | 5.84 [6.44] GB | 9.1 GB |
+| two-stage campaign, `--particlize-only`, 10/GPU | old | 917 (1,071) | | 67.4 | 103.7 | 27.1 | 76 / 75 % | 5.94 | 95.9 GB | 5.81 [6.39] GB | 8.1 GB |
+| | **new** (A1–A9) | **1,237 (1,442)** | **+35 %** (+55 % over 796) | 50.0 | **50.1** | 17.8 | 89 / 88 % | 5.16 | **74.0 GB** | 4.21 [4.57] GB | 8.9 GB |
+| hydro only, 12/GPU | old | 1,223 (1,325) | | 65.4 | 60.3 | 21.2 | 85 / 83 % | 4.94 | 66.5 GB | 4.01 [4.20] GB | 6.5 GB |
+| | **new** (A2–A7) | **1,601 (1,743)** | **+31 %** | 49.7 | **40.4** | 18.3 | 90 / 86 % | 3.95 | 57.1 GB | 4.01 [4.18] GB | 6.5 GB |
+
+All jobs completed: 300, 300, 300 and 144 events, none skipped. Every log says `host sync: block`. There was no OOM (`docker events`, kernel `oom_kill`), and the watchdog never fired.
+
+**One job alone on GPU0** (`prof_auau.sh … clean 3`: `MUSIC_PROFILE=1`, OMP 3, seed 1). The old two-stage and hydro jobs were run again today with the old image; the old particlize-only job is the 2026-10-11 one.
+
+| per event | two-stage campaign, 15 events: old → new | particlize file only, 15 events: old → new | hydro only, 4 events: old → new |
+|---|---|---|---|
+| **wall s** | 45.1 → **22.9** (−49 %) | 38.0 → **18.2** (−52 %) | 25.3 → **16.7** (−34 %) |
+| event with the background / jet events | 65.5 / 43.7 → 48.0 / 21.1 | 59.1 / 36.5 → 42.4 / 16.5 | |
+| **CPU core-s** (main thread) | 73.8 (39.3) → **33.9** (17.8) | 66.4 (32.1) → **29.4** (13.2) | 39.6 (20.4) → **29.4** (13.0) |
+| GPU busy s | 6.07 → 5.19 | 5.87 → 5.04 | 4.63 → 3.70 |
+
+The report's estimate for A1–A8 was −40 core-s per two-stage campaign event (−53 %); measured: −39.9 (−54 %). For hydro only it estimated −12 core-s (A1–A7); measured: −10.2.
+
+**What limits the rate now**
+- **Two-stage:** 5.3 GPU-s per event against 6.0 before. 28 of ~500 jet-leg steps are no longer recomputed; the remaining drop comes from A1–A7 (6.00 → 5.40 without the restart).
+  - The ceiling at 90 % GPU busy is now ~1,225 events/h (pair + particlize) and ~1,255 (particlize only).
+  - The runs reach 91 % and 98 % of that: the two-stage campaign is **nearly GPU-bound** on this machine, and the particlize-only one is.
+  - Over half the threads stay idle (18–20 of 48 busy, against 27 before).
+- **Hydro only:** 3.95 GPU-s per event (−20 %). The ceiling at 90 % is ~1,640 events/h, and the run reaches 98 % of it.
+- **More events/h now need less GPU work per event**, not more jobs: C1 (O+O grid), C3 and C4 of REPORT_CPU_GPU.md §5.
+  - 12 jobs/GPU for the two-stage campaign could add at most ~9 % (not measured).
+  - Its host peak (100.6 GB at 10/GPU) leaves little room for 12/GPU with the pair file. `--particlize-only` (74.0 GB) does leave room.
+
+**Memory and disk**
+- **Particlize file only:** host peak −22 GB (95.9 → 74.0 GB) and per-job VmHWM 5.81 → 4.21 GB. This is A9: MUSIC_2 no longer stores its evolution.
+- **Pair + particlize:** peak 103.8 → 100.6 GB, at t = 211 s while the staggered jobs start.
+- **GPU memory:** the restart's checkpoint stays on the GPU, 96 MB per job, so VRAM rises 8.1 → 9.1 GB per GPU at 10 jobs (of 24 GB).
+- **Swap:** system swap grew by ~100 MB during the two-stage runs, as in R5/R6 above.
+- **Disk per 300 events:** unchanged; 66 GiB for pair + particlize, 27 GiB for the particlize file only.
+
+**Correctness** (every dataset and attribute compared bit for bit, NaN = NaN; `compare_h5.py`)
+- **Hydro only, old vs new image** (seed 1, 4 events): all 6 datasets are identical.
+  - The only other difference is the recorded job XML: `<output_momentum_anisotropy_vs_etas>0` (A4).
+- **Two-stage, old vs new image** (seed 1, 15 events, single jobs):
+  - all 40 datasets of the particlize file are identical;
+  - 45 of the 46 datasets of the pair file are identical. `source/flux` differs in 16 of 330 values, by ≤ 3 ulp (4.4e-16);
+  - the job XML differs by the A4 line.
+- **Restart vs `--no-music2-restart`** (same image, 300 events, all 20 seeds):
+  - all 40 datasets of every particlize file are identical;
+  - in the pair files everything is identical except `source/flux`: 1,072 of 6,545 values, ≤ 7 ulp (8.9e-16);
+  - attributes differ only in `prod_music2_restart`, `prod_host` and the wall times.
+- **`source/flux` differs run to run anyway:** the same image and seed with the restart, as a job alone vs as one of 20 jobs, differ in 29 of 330 values (≤ 4 ulp). R1 vs R2 above showed the same kind of difference (≤ 4 ulp). It is not caused by the changes.
+- **Particlize file only vs pair + particlize** (new image, 20 seeds): all 35 datasets the two files share are identical.
+  - The particlize-only file lacks, by design (as before), the jet-leg entries that come from the pair writer: `events/ntau_jet`, `frames_identical`, `jet_edge_e_max(_eta)`, `jet_hit_edge` and the `pair_file` attribute.
+- **`tests/test_resample.py`** (A2) on this machine's x86 OpenBLAS: 4 passed. That was still open in the js-contrib plan.
+
+**Verdict**
+- **Campaign default for this machine:** the same launcher settings, with the new image:
+
+  ```bash
+  IMAGE=jhputschke/xscape-prod:cu124-music2restart JOBS_PER_GPU=10 OMP_THREADS=3 \
+  MUSIC_CUDA_SYNC=block nohup ./launch_2gpu.sh --lbt-cache /work/lbt_cache/lbt_tables_v1.bin \
+      --stagger 12 60 45 0 /data/camp_pth3 --campaign pth3 \
+      --pthat-bins 10-20,20-30,30-40 --jets-per-bin 5 --parton-ymax 0.6 \
+      --write-particlize both > /data/camp_pth3.log 2>&1 &
+  ```
+
+  - **~1,120 events/h (+41 %).** 60 × 45 = 2,700 events then take ~2.4 h instead of ~3.4 h.
+  - With `--particlize-only`: **~1,240 events/h** and 22 GB less host memory.
+  - The restart is on by default. `--no-music2-restart` after OUTDIR switches it off; that measured 965 events/h.
+- **Not covered here:** O+O (A4–A6 apply there too), and a campaign longer than one round of 20 jobs.
+  - The new image is ahead of js-contrib `main`. For a campaign, pin it by digest (`jhputschke/xscape-prod@sha256:ce98cc17a4b2115f0ad7f987b1d45c6f18f2273876141e0d3c148f97127592a4`, image ID `d4acf127186f`) or wait for a dated tag.
+
+Raw data on this machine: `~/prod_test/bench/music2restart_20261012/`: `REPORT.md`, `summary.jsonl`, run directories with monitor and job logs, `cmp_*.txt` / `flux_*.txt` / `partonly_common.txt` (comparisons), `chain.sh` and `compare_all.sh` (the order of the runs), `restart_stats.py`, `compare_h5.py`, and `test_resample_3090.log`.
+
+<a id="oo-grid"></a>
+## O+O campaign: the standard ±15 fm MUSIC grid vs ±10.5 fm (2026-10-12)
+
+The question: what does an O+O campaign (`prod_OO_isr`) give on this machine with the new image, and with the smaller MUSIC grid that [REPORT_CPU_GPU.md](Plans/REPORT_CPU_GPU.md) §5–6 suggests (C1)?
+- **C1** is ±10.5 fm instead of ±15 fm in x and y: 70 × 70 instead of 100 × 100 transverse cells, the same 0.3 fm cells and the same η grid.
+- The O+O fireball stays within |x|, |y| ≲ 7 fm, and the 64 × 64 × 32 output grid reaches ±9.84 fm.
+- The report asked for a physics check before switching: a few hundred events with no grid-edge hits, and unchanged observables.
+
+**Setup**
+- **Image:** `xscape-prod:cu124-music2restart` (`d4acf127186f`, as in the section above). One ±15 fm reference run used the old `cu124` (`066094dfcb4f`).
+- **Settings as `launch_2gpu_oo.sh`:** one container per GPU, `run_jobs.sh -j J --mps`, `OMP_WAIT_POLICY=passive`, `MUSIC_CUDA_SYNC=block`. One wave, seeds 1…2J, default physics (pT̂ 20–40 GeV, b < 3 fm).
+  - Started by `run_oo.sh` (a copy of the 2026-10-11 O+O harness), with the same monitors as the Au+Au runs.
+- **The grid:** `--user-xml` with a copy of the image's `OO_MCGlauber_MUSIC_isr.xml`.
+  - `…_grid15.xml` is unchanged; `…_grid10p5.xml` differs only in `<grid_max_x>`/`<grid_max_y>` 10.5.
+  - MUSIC logged `GPU grid allocated (70x70x60 cells)`, `dx = 0.3 fm`. The hydro files record `X_min_MUSIC = −10.5`, `nX_MUSIC = 70`.
+  - The driver's check that the output grid lies inside MUSIC's grid passed.
+- **Outputs:**
+  - "hadrons only": `--bulk-hadrons 10 --no-particlize --no-hydro-file`, as R1–R4 of 2026-10-11;
+  - "default": hydro file, particlize file and jet hadrons, as R5.
+- **events/h by makespan**, per-event rate in parentheses. CPU from cgroup `cpu.stat`. GPU-s/event = mean SM busy × 2 × 3600 / events/h.
+
+| run | image | grid | output | jobs/GPU, OMP | events | **events/h makespan** (per event) | s/event in a job | core-s/event | threads busy (of 48) | GPU0 / GPU1 busy | GPU-s/event | host peak | per-job VmHWM, mean [max] | VRAM/GPU |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| H15_j8_old | old | ±15 | hadrons only | 8, 3 | 16 × 15 | 3,534 (3,658) | 15.8 | 21.5 | 22.0 | 61 / 61 % | 1.24 | 37.8 GB | 2.44 [2.56] GB | 4.4 GB |
+| H15_j8 | new | ±15 | hadrons only | 8, 3 | 16 × 15 | 3,798 (3,940) | 14.6 | 21.7 | 23.3 | 57 / 58 % | 1.09 | 35.4 GB | 2.45 [2.55] GB | 4.4 GB |
+| H10_j8 | new | **±10.5** | hadrons only | 8, 3 | 16 × 15 | **6,444** (6,756) | 8.5 | 13.3 | 23.9 | 58 / 57 % | 0.64 | 21.8 GB | 1.37 [1.42] GB | 3.4 GB |
+| H15_j12 | new | ±15 | hadrons only | 12, 2 | 24 × 15 (2 skipped) | 3,730 (3,864) | 22.4 | 28.7 | 30.4 | 59 / 58 % | 1.13 | 50.8 GB | 2.44 [2.55] GB | 6.5 GB |
+| H10_j12 | new | **±10.5** | hadrons only | 12, 2 | 24 × 15 (2 skipped) | **6,420** (6,664) | 13.0 | 17.1 | 31.1 | 60 / 60 % | 0.67 | 30.1 GB | 1.38 [1.42] GB | 4.9 GB |
+| D15_j12 | new | ±15 | default | 12, 2 | 24 × 15 | 4,070 (4,196) | 20.6 | 24.3 | 28.0 | 62 / 62 % | 1.10 | 50.3 GB | 2.42 [2.52] GB | 6.5 GB |
+| D15_j12_rep | new | ±15 | default | 12, 2 | 24 × 15 | 4,031 (4,148) | 20.8 | 24.5 | 29.3 | 61 / 62 % | 1.10 | 65.5 GB¹ | 2.42 [2.52] GB | 6.5 GB |
+| D10_j12 | new | **±10.5** | default | 12, 2 | 24 × 15 | **7,490** (7,790) | 11.1 | 13.0 | 27.6 | 67 / 66 % | 0.64 | 29.8 GB | 1.35 [1.41] GB | 5.0 GB |
+| **L15_j8** (campaign length) | new | ±15 | default | 8, 3 | 16 × 60 (1 skipped) | **4,006** (4,111) | 14.0 | 18.5 | 22.2 | 62 / 61 % | 1.10 | 51.3 GB | 2.50 [2.59] GB | 4.4 GB |
+| **L10_j8** (campaign length) | new | **±10.5** | default | 8, 3 | 16 × 60 (5 skipped) | **7,282** (7,593) | 7.6 | 10.2 | 21.5 | 66 / 65 % | 0.65 | 24.7 GB | 1.39 [1.44] GB | 3.4 GB |
+
+¹ The idle baseline before this run was 5.6 GB instead of ~4 GB, and its jobs peaked as in D15_j12: not the jobs.
+
+- **All runs:** all jobs completed, no OOM, the watchdog never fired, and every log says `host sync: block`.
+- **Skipped events:** 10 of 4,440, all Matter's "minus log of sudakov negative". The driver skips the event and goes on; that's the known ~1 in 400.
+- **Grid-edge hits:** none. `diag/hit_grid_boundary` was 0 in all 2,994 events with a hydro file (1,315 of them on ±10.5 fm).
+
+**Throughput**
+- **±10.5 fm grid: +82 % events/h at the campaign length:** 7,282 vs 4,006 (L10/L15, launcher defaults 8/GPU, default outputs).
+  - The short runs agree: +70 % hadrons only (6,444 vs 3,798) and +84 % default outputs (7,490 vs 4,070).
+  - CPU per event −45 % (10.2 vs 18.5 core-s), GPU per event −41 % (0.65 vs 1.10 s), host memory per job −45 % (1.39 vs 2.50 GB).
+- **New image vs old on the ±15 fm grid:** +7 % (3,798 vs 3,534, hadrons only, same day). Against 2026-10-11's R5 (default outputs, 3,657): 4,006–4,070.
+- **Still host-bound, now on both grids:**
+  - the GPUs are 57–67 % busy, and 12/GPU gives nothing over 8/GPU (6,420 vs 6,444; 3,730 vs 3,798);
+  - the busy threads stay at ~22–24 at 8/GPU, the number of physical cores;
+  - events/h ≈ 24 cores × 3600 / core-s per event (24 × 3600 / 13.3 = 6,500 vs 6,444 measured).
+  - The GPU ceiling at 90 % busy is ~10,000 events/h on the ±10.5 fm grid (~5,900 on ±15). The next step for O+O is B2 (Cornelius on the GPU), as REPORT_CPU_GPU.md §6 says.
+- **The 15-event runs' makespans are short:** 134–346 s, and the jobs' startup is a few seconds of that. The 60-event runs (472 and 862 s) are the campaign numbers.
+
+**Output: ~30 MB per event on both grids.** The output grid is the same, and so is the surface (below): 27 GiB per 960 events.
+- At 7,300 events/h that is **~220 GB/h**. The 658 GB free on `/` would last ~3 h.
+- A campaign with default outputs therefore needs `--upload … --delete all`, or `/data`, as for R5. Hadrons only stays at ~0.15 MB per event.
+
+**Physics check, ±10.5 vs ±15 fm** (same seeds, event by event: `per_event.py`, `odd_events.py`, `odd_detail.py`, `bulk_had.py`)
+- **Control, run-to-run noise:** D15_j12 repeated as D15_j12_rep (same image, grid and seeds).
+  - In all 360 events the initial state, the hydro output grid and the freeze-out surface are **bit-identical**.
+  - The final partons or jet hadrons differ in **266 of 360 events (74 %)**, from event 1–9 of a job on. This is the O+O irreproducibility noted in REPORT_CPU_GPU.md; it lies after the hydro, in Matter/hadronization. The grid comparison below can't be more exact than this.
+- **Default outputs, D10_j12 vs D15_j12:** 360 events, 24 jobs.
+  - The initial state is identical in every event: Glauber, pT̂, ISR subtraction, string energy.
+  - **In 357 events the hydro output grid agrees within 4.1e-6 of each field's maximum, and the freeze-out surface is bit-identical.** The rest is float32 interpolation from a grid with another origin (−10.5 vs −15 fm).
+  - 160 of these are identical in everything, including partons and jet hadrons. In the others only the partons or jet hadrons differ, which is fewer than in the control (197 vs 266 events).
+- **Campaign runs, L10_j8 vs L15_j8:** 660 events of the 11 jobs that skipped no event in either run. Jobs with a skip are left out because their rows no longer line up.
+  - 654 events: hydro within 1.7e-6, surface bit-identical.
+- **The other 3 + 6 events** (of 1,020):
+  - **Flow velocity only, 4 events** (seed 6 ev 11, seed 7 ev 10, seed 9 ev 42, seed 11 ev 20): it differs by at most 3.4e-4 of its range, in single late frames at the dilute output edge. The surface is bit-identical.
+  - **One surface cell, 1 event** (seed 11 ev 23): differs by 3e-8 fm.
+  - **Near-vacuum cells, 2 events** (seed 2 ev 12, seed 9 ev 60): the velocity differs by up to 0.6–0.7, but only where e ≤ 0.009 GeV/fm³ (the event maximum is 4.8–8.3). There the velocity of an almost empty cell is ill-conditioned and amplifies the last-bit differences.
+    - The energy density differs by at most 4e-4 GeV/fm³ there.
+    - The surface has the same cells, with values within 1.5e-4 (relative, per column); τ_freezeout and the surface's extent are the same.
+- **Observables, means over the events:** τ_freezeout, surface cells per event, final partons, jet hadrons and the energy on the first output frame agree between the grids well inside one standard error. For example, L10 vs L15:
+  - τ_fo 4.357 ± 0.018 fm/c on both;
+  - 1.335e5 surface cells on both;
+  - jet hadrons 114.7 ± 1.3 vs 114.3 ± 1.3.
+- **Bulk hadrons** (iSS in the job, hadrons-only runs, 10 oversamples):
+  - bit-identical in 239 of 240 events, H10_j8 vs H15_j8;
+  - for comparison, the same grid with another job count (H15_j12 vs H15_j8) gives 227 of 239;
+  - 373.44 ± 2.51 hadrons per oversample on both grids.
+
+**Verdict**
+- **The ±10.5 fm grid is safe for O+O at these settings (b < 3 fm, 200 GeV), and +82 % events/h.**
+  - No grid-edge hit in 2,994 events (1,315 on ±10.5 fm).
+  - The hydro and the surface are the same to float32 rounding, apart from a few near-vacuum cells.
+  - The jet and bulk hadrons agree as well as two runs of the same grid do.
+- **For larger b or another system,** check the fireball extent again: the fireball has to stay well inside ±9.84 fm.
+- **Campaign on this machine:** the launcher defaults (8/GPU, OMP 3) with the new image and the grid XML:
+
+  ```bash
+  IMAGE=jhputschke/xscape-prod:cu124-music2restart nohup ./launch_2gpu_oo.sh \
+      --upload OO_c1 --delete all --min-free 100G 64 100 0 /data/OO_c1 --campaign c1 \
+      --user-xml /work/bench/oo_grid_20261012/OO_MCGlauber_MUSIC_isr_grid10p5.xml > /data/OO_c1.log 2>&1 &
+  ```
+
+  ~7,300 events/h with default outputs, so 6,400 events in under an hour. The upload then has to keep up with ~220 GB/h (~61 MB/s), against the ~80 MB/s measured on 2026-10-05: just enough, with little margin. `--min-free` stops the campaign if it falls behind. Without the upload, 6,400 events are ~190 GB on `/data`; hadrons only stays at ~0.15 MB per event.
+- **To make it the default,** the production XML in js-contrib (`prod_OO_isr/OO_MCGlauber_MUSIC_isr.xml`) would need `grid_max_x/y` 10.5. That isn't done here.
+
+Raw data on this machine: `~/prod_test/bench/oo_grid_20261012/`: `REPORT.md`, `summary.jsonl`, run directories, the two XMLs, `pe_*.txt`, `odd_*.txt`, `bulk_hadrons.txt`, `cmp_*.txt`, `chain.sh` and `chain2.sh`.
