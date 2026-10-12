@@ -237,7 +237,14 @@ The GB10 is GPU-limited, so events/h there rise only with the GPU part (28 of ~5
   - the unit tests (including `test_resample.py` with the Mac's numpy and BLAS);
   - the restart and verify-mode checks;
   - the dataset-by-dataset comparison with the code before the PRs.
-- The 3090 box: events/h with the amd64 image.
+- ~~The 3090 box: events/h with the amd64 image.~~ Done 2026-10-12 with
+  `xscape-prod:cu124-music2restart`, see
+  [`BENCHMARK_2x3090.md`](../BENCHMARK_2x3090.md#music2restart):
+  - two-stage campaign at 10 jobs/GPU: 796 → 1,121 events/h (+41 %; 965 with
+    `--no-music2-restart`); `--particlize-only` 917 → 1,237; hydro only 1,223 → 1,601;
+  - every jet leg started at step 28; output identical to the old image and between restart
+    and no restart (300 events), except `source/flux` at ≤ 7 ulp, which differs run to run
+    anyway.
 - **Default on** since the documentation commit (2026-10-11), at the user's request, before
   the M3 Max and 3090 checks. `--no-music2-restart` turns it off. It is off by itself with
   `--write-particlize jet` / `--surface jet` and on builds without the restart, decided from
