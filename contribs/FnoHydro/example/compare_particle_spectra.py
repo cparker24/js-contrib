@@ -10,7 +10,12 @@ Input: two JetScapeWriterFinalStateHadronsAscii files (flat, one header line
 JetScapeWriterFinalStateStream.cc / JetScapeReaderFinalStateHadrons.cc).
 
 Usage:
-  python3 compare_particle_spectra.py <fno.dat> <music.dat> [n_oversamples] [out.root]
+  python3 compare_particle_spectra.py <fno.dat> <music.dat> [n_oversamples_fno] [n_oversamples_music] [out.root] [y_min] [y_max]
+
+n_oversamples_fno/n_oversamples_music are each file's own
+<SoftParticlization><iSS><number_of_repeated_sampling> -- pass different
+values when comparing runs that used different oversampling (e.g. a
+doubled-statistics check on one arm only).
 """
 import sys
 import math
@@ -39,8 +44,21 @@ def rapidity(e, pz):
     return 0.5 * math.log((e + pz) / (e - pz))
 
 
+def count_events(path):
+    """Number of per-event header lines ('# Event <n> weight ...'), so a
+    multi-event file normalizes correctly without the caller tracking it."""
+    n = 0
+    with open(path) as f:
+        for line in f:
+            if line.startswith("#") and "Event" in line.split():
+                n += 1
+    return n
+
+
 def fill_spectra(path, n_oversamples, label, color, y_cut=(-1.0, 1.0)):
     y_min, y_max = y_cut
+    n_events = count_events(path)
+    n_draws = n_oversamples * n_events
     h_pt = ROOT.TH1D(f"hPt_{label}",
                       "dN/dp_{T} per sampled event, |y|<%.1f;p_{T} [GeV];dN/dp_{T}" % y_max,
                       20, 0.0, 3.0)
@@ -56,7 +74,7 @@ def fill_spectra(path, n_oversamples, label, color, y_cut=(-1.0, 1.0)):
     for pid, pstat, e, px, py, pz in parse_final_state_hadrons(path):
         pt = math.sqrt(px * px + py * py)
         y = rapidity(e, pz)
-        w = 1.0 / n_oversamples
+        w = 1.0 / n_draws
         h_y.Fill(y, w)
         n_particles += 1
         species[pid] = species.get(pid, 0) + 1
@@ -77,11 +95,11 @@ def fill_spectra(path, n_oversamples, label, color, y_cut=(-1.0, 1.0)):
     h_y.SetMarkerColor(color)
     h_y.SetMarkerStyle(20)
 
-    dndy_mid = n_midrapidity / (n_oversamples * (y_max - y_min))
-    print(f"{label}: {n_particles} total sampled hadrons "
-          f"({n_particles / n_oversamples:.1f} per oversample, n_oversamples={n_oversamples})")
+    dndy_mid = n_midrapidity / (n_draws * (y_max - y_min))
+    print(f"{label}: {n_events} event(s) x {n_oversamples}x oversampling = {n_draws} total draws, "
+          f"{n_particles} total sampled hadrons ({n_particles / n_draws:.1f} per draw)")
     print(f"{label} mid-rapidity (|y|<{y_max:.1f}): {n_midrapidity} hadrons "
-          f"({n_midrapidity / n_oversamples:.1f} per oversample, dN/dy = {dndy_mid:.1f})")
+          f"({n_midrapidity / n_draws:.1f} per draw, dN/dy = {dndy_mid:.1f})")
     top_species = sorted(species_mid.items(), key=lambda kv: -kv[1])[:10]
     print(f"{label} top mid-rapidity PIDs: {top_species}")
 
@@ -91,14 +109,15 @@ def fill_spectra(path, n_oversamples, label, color, y_cut=(-1.0, 1.0)):
 def main():
     fno_path = sys.argv[1]
     music_path = sys.argv[2]
-    n_oversamples = int(sys.argv[3]) if len(sys.argv) > 3 else 20
-    out_root = sys.argv[4] if len(sys.argv) > 4 else "spectra_comparison.root"
-    y_min = float(sys.argv[5]) if len(sys.argv) > 5 else -1.0
-    y_max = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
+    n_oversamples_fno = int(sys.argv[3]) if len(sys.argv) > 3 else 20
+    n_oversamples_music = int(sys.argv[4]) if len(sys.argv) > 4 else n_oversamples_fno
+    out_root = sys.argv[5] if len(sys.argv) > 5 else "spectra_comparison.root"
+    y_min = float(sys.argv[6]) if len(sys.argv) > 6 else -1.0
+    y_max = float(sys.argv[7]) if len(sys.argv) > 7 else 1.0
 
-    h_pt_fno, h_y_fno = fill_spectra(fno_path, n_oversamples, "FNO", ROOT.kAzure + 1,
+    h_pt_fno, h_y_fno = fill_spectra(fno_path, n_oversamples_fno, "FNO", ROOT.kAzure + 1,
                                       y_cut=(y_min, y_max))
-    h_pt_music, h_y_music = fill_spectra(music_path, n_oversamples, "MUSIC", ROOT.kOrange + 7,
+    h_pt_music, h_y_music = fill_spectra(music_path, n_oversamples_music, "MUSIC", ROOT.kOrange + 7,
                                           y_cut=(y_min, y_max))
 
     c_pt = ROOT.TCanvas("c_pt", "pT spectrum", 800, 600)

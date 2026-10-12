@@ -478,28 +478,52 @@ void FnoHydro::EvolveHydro() {
   clearSurfaceCellVector();
   FindAConstantTemperatureSurface(freezeout_temperature, surfaceCellVector_);
 
-  // Diagnostic: eta distribution of the found surface itself (count and
-  // summed |d3sigma_mu[0]|, the Cooper-Frye normal component that mainly
-  // sets yield). WriteEtaProfileDiagnostics already showed the raw
-  // energy-density field is smooth in eta at every tau step, so this checks
-  // whether a central-eta pile-up (seen in the final sampled-hadron rapidity
-  // spectrum) instead enters at surface construction, vs. further
-  // downstream in iSS's own Cooper-Frye sampling.
+  // Diagnostic: eta distribution of the found surface itself -- cell count,
+  // all four raw |d3sigma_mu[i]| components, the proper rest-frame volume
+  // element dsigma_mu*u^mu (the quantity Cooper-Frye yield actually scales
+  // with, not dsigma0 alone), and the mean flow 4-velocity umu[3] (eta
+  // component) for cross-reference against WriteEtaProfileDiagnostics' raw
+  // vz. Follow-up to the original central-pile-up investigation: after the
+  // velocity-wiring fix, a smaller residual peak (~15-20% in final dN/dy)
+  // remains right around eta=0 even within a narrow, edge-buffered window,
+  // while |d3sigma_mu[0]| alone only showed a ~5% central bump -- this
+  // checks whether the other components / the full dot product show a
+  // sharper central feature that would better account for the final size.
   if (Is3DPlus1()) {
     std::vector<long long> count_per_bin(neta_fno, 0);
-    std::vector<double> dsigma_per_bin(neta_fno, 0.0);
+    std::vector<double> dsigma_abs_per_bin[4];
+    for (int c = 0; c < 4; ++c) dsigma_abs_per_bin[c].assign(neta_fno, 0.0);
+    std::vector<double> dsigma_dot_u_per_bin(neta_fno, 0.0);
+    std::vector<double> umu3_per_bin(neta_fno, 0.0);
+    std::vector<double> tau_per_bin(neta_fno, 0.0);
     int out_of_range = 0;
     for (const auto &cell : surfaceCellVector_) {
       int bin = static_cast<int>(std::round((cell.eta - eta_min_fno) / deta_fno));
       if (bin < 0 || bin >= neta_fno) { ++out_of_range; continue; }
       ++count_per_bin[bin];
-      dsigma_per_bin[bin] += std::fabs(cell.d3sigma_mu[0]);
+      double dot_u = 0.0;
+      for (int c = 0; c < 4; ++c) {
+        dsigma_abs_per_bin[c][bin] += std::fabs(cell.d3sigma_mu[c]);
+        dot_u += cell.d3sigma_mu[c] * cell.umu[c];
+      }
+      dsigma_dot_u_per_bin[bin] += dot_u;
+      umu3_per_bin[bin] += cell.umu[3];
+      // iSS's Cooper-Frye formula (emissionfunction.cpp's calculate_dN_dxtdetady)
+      // multiplies its whole integrand by this cell's freeze-out tau -- a
+      // direct, additional eta-dependent amplification on top of dsigma_mu*u^mu
+      // if tau itself varies with eta across the surface.
+      tau_per_bin[bin] += cell.tau;
     }
     std::ofstream f("surface_eta_profile_event" + std::to_string(fno_event_counter - 1) + ".csv");
-    f << "eta_bin,eta_value,n_surface_cells,sum_abs_dsigma0\n";
+    f << "eta_bin,eta_value,n_surface_cells,sum_abs_dsigma0,sum_abs_dsigma1,"
+      << "sum_abs_dsigma2,sum_abs_dsigma3,sum_dsigma_dot_u,mean_umu3,mean_tau\n";
     for (int b = 0; b < neta_fno; ++b) {
-      f << b << "," << (eta_min_fno + b * deta_fno) << "," << count_per_bin[b]
-        << "," << dsigma_per_bin[b] << "\n";
+      double mean_umu3 = count_per_bin[b] > 0 ? umu3_per_bin[b] / count_per_bin[b] : 0.0;
+      double mean_tau = count_per_bin[b] > 0 ? tau_per_bin[b] / count_per_bin[b] : 0.0;
+      f << b << "," << (eta_min_fno + b * deta_fno) << "," << count_per_bin[b] << ","
+        << dsigma_abs_per_bin[0][b] << "," << dsigma_abs_per_bin[1][b] << ","
+        << dsigma_abs_per_bin[2][b] << "," << dsigma_abs_per_bin[3][b] << ","
+        << dsigma_dot_u_per_bin[b] << "," << mean_umu3 << "," << mean_tau << "\n";
     }
     f.close();
     JSINFO << "Wrote surface eta-profile diagnostic (" << out_of_range
