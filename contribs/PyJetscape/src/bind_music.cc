@@ -119,6 +119,15 @@ void bind_music(py::module_ &m) {
            "<Hydro><MUSIC><freeze_out_surface> in the first block, overridden "
            "per instance in its own block.",
            py::arg("build"))
+      .def("get_store_evolution", &MpiMusic::get_store_evolution,
+           "Whether MUSIC stores this instance's evolution frames in memory.")
+      .def("set_store_evolution", &MpiMusic::set_store_evolution,
+           "Store this instance's evolution frames in MUSIC's in-memory store "
+           "(True, default) or not (False), from its next evolution on.  "
+           "False keeps the grid metadata and the frame count (bulk_info, "
+           "get_native_ntau) but no cells: for an instance whose evolution "
+           "nobody reads.  music4gpu; CPU MUSIC ignores it.",
+           py::arg("store"))
       .def("get_hit_grid_boundary", &MpiMusic::get_hit_grid_boundary,
            "True if the last evolution stopped because the freeze-out "
            "surface reached the transverse grid boundary (MUSIC's "

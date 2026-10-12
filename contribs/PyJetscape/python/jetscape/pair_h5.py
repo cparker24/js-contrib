@@ -37,6 +37,10 @@ Layout (on top of :class:`jetscape.fno_h5_writer.FnoH5Writer`)
   :func:`jetscape.fno_h5_writer.write_row_view`): it reads exactly like the full layout,
   event by event, and root attribute ``bg_layout`` is ``"shared"``.  Without reuse the
   file is written as before (no ``bg_layout`` attribute).
+* A reused background is recognised by a fingerprint of its raw frames and then neither
+  read nor resampled again: its frame hashes and edge maxima are those of the event that
+  first used it (``verify_bg_reuse`` checks this).  Only ``bg_layout="full"`` with a file
+  still reads it every event, to store it in every row.
 * ``source/droplets`` ``(M, 8)`` + ``source/offsets``, columns ``droplet_columns``.  There is no
   ``source/S``: MUSIC evaluates the liquefier kernel per cell and step and never keeps a
   gridded source, and a re-deposit on the output grid would not be what MUSIC applied.
@@ -53,7 +57,7 @@ Layout (on top of :class:`jetscape.fno_h5_writer.FnoH5Writer`)
   the wake notebook and ``wake_pyvista.py`` read the file unchanged.
 
 With ``store_evolution=False`` no file is written at all: both legs are still read,
-resampled and hashed exactly as above, so ``last_event_diag``, ``last_bg_key`` and the
+resampled and hashed exactly as above (a reused background once), so ``last_event_diag``, ``last_bg_key`` and the
 event count are what a full run gives, for a
 :class:`jetscape.particlize_h5.ParticlizeH5Writer` that is then the job's only output
 (``run_prod_jet.py --particlize-only``).  ``source/`` and ``shower/`` are not kept either.
@@ -62,8 +66,9 @@ a particlize file uses it): its frame count and times then come from MUSIC's gri
 (``ntau_jet_music``, MUSIC's own steps, instead of ``ntau_jet`` on the output grid), and
 ``frames_identical`` with the two checks built on it (same initial condition, droplets
 applied) is gone, as are the jet leg's ``jet_edge_e_max``, ``jet_edge_e_max_eta`` and
-``jet_hit_edge`` (``n_hit_edge["jet"]`` is None).  The background is still read: its hash
-recognises a reused one.
+``jet_hit_edge`` (``n_hit_edge["jet"]`` is None).  The background is still read once per
+run: its hash recognises a reused one.  MUSIC_2 then does not store its evolution at all
+(``set_store_evolution(False)``, music4gpu): its frame count and grid stay in its metadata.
 
 Usage (see example/prod_AuAu_0_10_jet/run_prod_jet.py)
 -----------------------------------------------------
@@ -200,6 +205,13 @@ class PairH5Writer:
         fluid above freeze-out reached the edge of the stored box, so the stored
         evolution misses part of it (MUSIC's own, larger grid does not).  None: the
         maxima only, no flag.
+    verify_bg_reuse : bool
+        A reused background is recognised by a fingerprint of its raw frames (grid, frame
+        count and three whole frames), and then neither read nor resampled again: its
+        frame hashes and edge maxima come from the event that first used it.  Not with
+        ``bg_layout="full"`` and a file, which stores the background in every row.  True:
+        read and resample it anyway and raise if the fingerprint matched a different
+        background (a check for tests, at the old cost).
     """
 
     def __init__(self, out_file_name="pair_evo.h5", *, bg_id="MUSIC_1", jet_id="MUSIC_2",
@@ -207,7 +219,8 @@ class PairH5Writer:
                  compression=DEFAULT_COMPRESSION, keep_bits=None, store_droplets=True,
                  store_showers=True, keep_surface=(), provenance=None, extra_attrs=None,
                  force=True, verbose=False, bg_layout="auto", reuse=1,
-                 store_evolution=True, read_jet=True, edge_e_threshold=None):
+                 store_evolution=True, read_jet=True, edge_e_threshold=None,
+                 verify_bg_reuse=False):
         if grid_mode not in ("grid", "native"):
             raise ValueError(f"grid_mode must be 'grid' or 'native', got {grid_mode!r}")
         self._out_file_name = str(out_file_name)
@@ -255,6 +268,8 @@ class PairH5Writer:
         self._n_clipped = 0
         self._bg_hash = None
         self._bg_first = 0
+        self._bg_cache = None                   # _BgCache of the current background
+        self._verify_bg_reuse = bool(verify_bg_reuse)
         self._last = {}
 
     # ── wiring ──────────────────────────────────────────────────────────────────
@@ -285,6 +300,8 @@ class PairH5Writer:
                 "bulk_info and Matter/LBT would see no medium. Set "
                 "<Hydro><MUSIC><dump_hydro_only>0 (the jet leg is switched here).")
         jet.set_dump_hydro_only(True)
+        if hasattr(jet, "set_store_evolution"):    # read_jet=False: nothing reads it
+            jet.set_store_evolution(self._read_jet)
         for name, leg in (("bg", bg), ("jet", jet)):
             leg.set_skip_surface(name not in self._keep_surface)
 
@@ -354,8 +371,11 @@ class PairH5Writer:
 
         # Read and resample both legs before writing anything, so a leg that cannot be read
         # skips the whole event instead of leaving half a pair behind.  Only one leg's
-        # source-grid array is alive at a time; the output frames of both are kept.
+        # source-grid array is alive at a time; the output frames of both are kept.  A
+        # background recognised by its fingerprint is neither read nor resampled again.
         legs = {}
+        reuse_ok = not (self._store_evolution and self._bg_layout == "full")
+        cache = None
         for name, hydro, framework in (("jet", self._jet, False),
                                        ("background", self._bg, True)):
             if name == "jet" and not self._read_jet:
@@ -371,6 +391,14 @@ class PairH5Writer:
                               "frames", RuntimeWarning, stacklevel=3)
                 return None
             out = self._out(src)
+            if name == "background" and reuse_ok:
+                fp = _fingerprint(arr, src)
+                if self._bg_cache is not None and self._bg_cache.fp == fp:
+                    cache = self._bg_cache
+                    if not self._verify_bg_reuse:
+                        legs[name] = (None, src, out)
+                        del arr
+                        continue
             legs[name] = (self._resampled(arr, src, out), src, out)
             del arr
         if self._read_jet:
@@ -394,23 +422,33 @@ class PairH5Writer:
         w = self._w                             # None: store_evolution off, nothing written
 
         # Background first, then the jet leg; frame hashes carry the comparison across.
-        n_bg = self._clip(i, "background", bg_frames.shape[0])
+        n_bg = self._clip(i, "background", cache.n_frames if bg_frames is None
+                          else bg_frames.shape[0])
         if w is not None:
             w.ensure_capacity(nevents=i + 1, choose_ntau=n_bg)
         shared = self._bg_layout == "shared"
-        bg_hashes = []
-        bg_edge = _EdgeMax()
-        for t in range(n_bg):
-            frame = np.ascontiguousarray(bg_frames[t].transpose(3, 0, 1, 2))
-            if w is not None and not shared:
-                w.write_frame(i, t, frame, dataset="arr_bg")
-            bg_hashes.append(hashlib.blake2b(frame.tobytes(), digest_size=16).digest())
-            bg_edge.add(frame[0])
+        if bg_frames is None:                   # the cached background
+            bg_hashes, bg_edge, bg_key = cache.hashes, cache.edge, cache.key
+        else:
+            bg_hashes = []
+            bg_edge = _EdgeMax()
+            for t in range(n_bg):
+                frame = np.ascontiguousarray(bg_frames[t].transpose(3, 0, 1, 2))
+                if w is not None and not shared:
+                    w.write_frame(i, t, frame, dataset="arr_bg")
+                bg_hashes.append(hashlib.blake2b(frame.tobytes(), digest_size=16).digest())
+                bg_edge.add(frame[0])
+            # A new background run?  Hash the whole leg: on MUSIC's native grid the first
+            # frame is at MUSIC's tau0, before any string deposits, and all zero.
+            bg_key = hashlib.blake2b(b"".join(bg_hashes), digest_size=16).digest()
+            if cache is not None and bg_key != cache.key:     # verify_bg_reuse
+                raise RuntimeError(
+                    f"PairH5Writer: event {i}: the background's fingerprint matches the "
+                    f"one of event {self._bg_first}, but its resampled frames differ")
+            if reuse_ok:
+                self._bg_cache = _BgCache(fp, bg_key, bg_hashes, bg_edge,
+                                          bg_frames.shape[0])
         tau_fo_bg = bg_src.tau_min + bg_src.ntau * bg_src.dtau
-
-        # A new background run?  Hash the whole leg: on MUSIC's native grid the first
-        # frame is at MUSIC's tau0, before any string deposits, and all zero.
-        bg_key = hashlib.blake2b(b"".join(bg_hashes), digest_size=16).digest()
         new_bg = bg_key != self._bg_hash
         if new_bg:
             self._bg_hash, self._bg_first = bg_key, i
@@ -762,6 +800,28 @@ class PairH5Writer:
                 "ignored the liquefier -- check that the MUSIC build has the jet source slot "
                 "(music4gpu needs the add_hydro_source_terms_from_jet port).",
                 RuntimeWarning, stacklevel=4)
+
+
+class _BgCache:
+    """What the writer keeps of the current background to recognise it again without
+    reading it: its fingerprint, key, per-frame hashes, edge maxima and frame count."""
+
+    __slots__ = ("fp", "key", "hashes", "edge", "n_frames")
+
+    def __init__(self, fp, key, hashes, edge, n_frames):
+        self.fp, self.key, self.hashes = fp, key, hashes
+        self.edge, self.n_frames = edge, n_frames
+
+
+def _fingerprint(arr, src):
+    """A background run's identity from its raw frames, without resampling: the grid,
+    the frame count and frames 1, ntau/2 and ntau-1 whole (frame 0 is MUSIC's tau0,
+    before any string deposits, and can be all zero for every event)."""
+    n = arr.shape[0]
+    h = hashlib.blake2b(repr((src, tuple(arr.shape))).encode(), digest_size=16)
+    for k in sorted({min(1, n - 1), n // 2, n - 1}):
+        h.update(np.ascontiguousarray(arr[k]).tobytes())
+    return h.digest()
 
 
 class _EdgeMax:
