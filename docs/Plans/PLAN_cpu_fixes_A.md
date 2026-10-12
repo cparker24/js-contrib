@@ -66,8 +66,8 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
   - As built: features leading, one matmul per pass into buffers reused for the whole call,
     and per block of 4 output rows only the source rows it touches. That takes 3.6 ms per
     frame (3.8 in the prod image), bit-identical (`tests/test_resample.py`).
-  - Still to do: run `tests/test_resample.py` on the 3090 box (x86 OpenBLAS) and on the M3 Max
-    (Accelerate).
+  - Still to do: run `tests/test_resample.py` on the 3090 box (x86 OpenBLAS). Passed on the
+    M3 Max (2026-10-11, with the M3 test of `PLAN_music2_restart.md`).
 - **A1:** `PairH5Writer._write_event` fingerprints the background from MUSIC_1's native frames
   without resampling them. On a match it reuses the cached hashes, edge maxima and `bg_first`.
   This applies only to the `shared` layout or `store_evolution=False`; `full` still resamples

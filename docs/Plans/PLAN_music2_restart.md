@@ -1,5 +1,5 @@
 <!-- Design note, written 2026-10-11. Status: implemented on branches music2_restart, checked on
-     the GB10 (see "As built" at the end); Metal not compiled yet. -->
+     the GB10 (see "As built" at the end) and on the M3 Max (Metal). -->
 
 # Design: MUSIC_2 starts from MUSIC_1's state (A8 of REPORT_CPU_GPU.md)
 
@@ -230,7 +230,13 @@ On this build without the option, hydro-only Au+Au and O+O are identical to the 
 The GB10 is GPU-limited, so events/h there rise only with the GPU part (28 of ~500 steps).
 
 **Still to do:**
-- Metal: compile and run on the M3 Max.
+- ~~Metal: compile and run on the M3 Max.~~ Done 2026-10-11, reported by the user. The test
+  task of commit `6366159` (`docs/Plans/TEST_M3MAX_music2_restart.md`, removed afterwards)
+  passed:
+  - the Metal build;
+  - the unit tests (including `test_resample.py` with the Mac's numpy and BLAS);
+  - the restart and verify-mode checks;
+  - the dataset-by-dataset comparison with the code before the PRs.
 - The 3090 box: events/h with the amd64 image.
 - **Default on** since the documentation commit (2026-10-11), at the user's request, before
   the M3 Max and 3090 checks. `--no-music2-restart` turns it off. It is off by itself with
