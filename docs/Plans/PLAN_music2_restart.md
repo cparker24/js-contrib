@@ -1,4 +1,5 @@
-<!-- Design note, written 2026-10-11. Status: design, not implemented (branches music2_restart). -->
+<!-- Design note, written 2026-10-11. Status: implemented on branches music2_restart, checked on
+     the GB10 (see "As built" at the end); Metal not compiled yet. -->
 
 # Design: MUSIC_2 starts from MUSIC_1's state (A8 of REPORT_CPU_GPU.md)
 
@@ -176,3 +177,59 @@ MUSIC_2's string source still exists and is still asked every step. Its lists ar
   the checkpoint. Check iFreezeStart in production (string `tauStart` max, ~0.42 fm/c).
 - `hit_grid_boundary` / `reRunHydro` set before k_c. MUSIC_1 would have stopped, so no
   checkpoint exists in that case.
+
+## As built (2026-10-11, GB10)
+
+Commits: MUSIC4GPU `1303079` (`MusicCheckpoint`); X-SCAPE `28d92328` (`MpiMusic` setters) and
+`1bff0d15` (pin); js-contrib `run_prod_jet.py --music2-restart`, `PairH5Writer.liquefier_tau_delay`
+and the bindings.
+
+**Differences from the design above:**
+- **Decision 3 is not built.** With `--write-particlize jet` (MUSIC_2 builds the surface, MUSIC_1
+  doesn't), MUSIC_2 refuses the checkpoint ("this run builds the freeze-out surface, the
+  checkpoint's run did not") and runs from τ0. The driver doesn't switch the restart on in that
+  mode and says so. Running Cornelius up to the checkpoint in MUSIC_1 would let that mode gain
+  too; it's left for later.
+- **The checkpoint's step** is the last freeze-out step whose RK step ends by τ_delay. In
+  production that is step 28, τ = 0.96 fm/c, with τ0 = 0.4, Δτ = 0.02, iFreezeStart 3 and
+  facTau 5.
+- **What the checkpoint held there:** 96 MB of GPU state, 76,994 surface cells, and 6 frames
+  (109 MB).
+- **The key:**
+  - every `InitData` field that shapes the evolution, as hexfloats;
+  - ε_FO;
+  - the initial-state source's count, fingerprint (a hash of the string list) and τ range;
+  - a hash of the initial arena.
+
+  A mismatch names the first differing field.
+- **What `MUSIC_RESTART_VERIFY=1` checks:** that the jet leg, run from τ0, reaches the
+  checkpoint's step in the checkpoint's state:
+  - the GPU state;
+  - the surface;
+  - the counters;
+  - max e;
+  - the frames.
+
+  That the restore is complete is shown by the end-to-end comparison below.
+
+**Checks** (`run_prod_jet.py --events 4 --seed 1 --reuse 2`, compared dataset by dataset with
+the same job without the option):
+
+| setting | MUSIC_2 | output | job CPU (user) | wall |
+|---|---|---|---|---|
+| `MUSIC_RESTART_VERIFY=1`, `--write-particlize both` | 4 × "identical to the checkpoint" | identical | | |
+| `--write-particlize both` | 4 × started at step 28 | identical | 337 → 239 s | 99.0 → 92.9 s |
+| `--particlize-only` | 4 × started at step 28 | identical | 325 → 229 s | 87.9 → 82.0 s |
+| `MUSIC_CUDA_FORCE_DISCRETE=1`, `both` | 4 × started at step 28 | identical | 241 s | 95.4 s |
+| `--write-particlize jet` (before the driver guard) | 4 × from τ0, reason logged | identical | 307 → 307 s | |
+| `--write-particlize jet` (with the guard) | "restart OFF", reason printed | identical | | |
+
+On this build without the option, hydro-only Au+Au and O+O are identical to the phase 2 build.
+
+**Saving:** ~25 core-s per jet event, as the report estimated; −8 to −10 % wall per jet event.
+The GB10 is GPU-limited, so events/h there rise only with the GPU part (28 of ~500 steps).
+
+**Still to do:**
+- Metal: compile and run on the M3 Max.
+- The 3090 box: events/h with the amd64 image.
+- Make `--music2-restart` the default once both are done.
