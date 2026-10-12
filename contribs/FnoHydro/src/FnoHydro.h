@@ -132,6 +132,14 @@ private:
   // to leave on unconditionally.
   void WritePeakTemperatureDiagnostics(const std::string &out_path, int full_ntau);
 
+  // Diagnostic: writes the (x,y)-summed and (x,y)-maxed energy density per
+  // eta bin, at a sparse sample of tau steps spanning 0..full_ntau-1 --
+  // lets a per-eta profile be plotted over the evolution, to see whether a
+  // feature (e.g. a central-eta pile-up) is already present in the primed
+  // initial condition (k=0) or develops over the FNO's predicted rollout.
+  // 3D+1 only (Is3DPlus1()); a no-op otherwise.
+  void WriteEtaProfileDiagnostics(const std::string &out_path, int full_ntau);
+
   // Hottest-cell physical temperature (GeV) at step k of the finished
   // `output` tensor, matching the denormalization WritePeakTemperatureDiagnostics
   // and PassHydroEvolutionHistoryToFramework both use.

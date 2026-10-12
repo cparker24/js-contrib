@@ -143,11 +143,13 @@ public:
 
           e_.push_back(cell->energy_density);
           P_.push_back(cell->pressure);
-          // Approximation: treats vx/vy/vz as the spatial 4-velocity
-          // components directly (utau_=1) rather than properly boosting by
-          // gamma. Not yet consumed downstream -- FnoHydro's EvolveHydro()
-          // only reads pre_eq_ptr->e_[], not the velocity arrays -- so this
-          // is left simple pending an actual consumer that needs it right.
+          // ux_/uy_/ueta_ store raw 3-velocity components (vx, vy, vz),
+          // matching FluidCellInfo's own convention -- FnoHydro::EvolveHydro()
+          // reads these directly into the FNO model's vx/vy/vz input
+          // channels with no further transform, so this must stay consistent
+          // with that convention, not a genuine 4-velocity. utau_ is left as
+          // an unused approximation (true gamma not computed) since nothing
+          // downstream reads it.
           utau_.push_back(1.0);
           ux_.push_back(cell->vx);
           uy_.push_back(cell->vy);

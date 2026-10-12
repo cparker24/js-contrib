@@ -296,6 +296,12 @@ void FnoHydro::EvolveHydro() {
         if (!is3D) {
           int preq_glob_index = GetPreqCellIndex(GetPreqIdX(x_In),GetPreqIdY(y_In),0);
           double ed = pre_eq_ptr->e_[preq_glob_index];
+          // Real primed velocity (e.g. from MusicPrimedPreEq's embedded
+          // MpiMusic snapshot); 0 for NullPreDynamics, which populates these
+          // arrays with 0 too -- so this is a no-op there, not a behavior
+          // change. See MusicPrimedPreEq.h's ux_/uy_/ueta_ fill.
+          double vx = pre_eq_ptr->ux_[preq_glob_index];
+          double vy = pre_eq_ptr->uy_[preq_glob_index];
 
           if (n_features == 4 ) {
 
@@ -303,15 +309,13 @@ void FnoHydro::EvolveHydro() {
 
               fno_input_tensor[0][i][j][k] = NormalizeEnergyDensity(ed, tau0);
               fno_input_tensor[1][i][j][k] = T;
-              // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
-              fno_input_tensor[2][i][j][k] = 0;
-              fno_input_tensor[3][i][j][k] = 0;
+              fno_input_tensor[2][i][j][k] = vx;
+              fno_input_tensor[3][i][j][k] = vy;
           }
           else if (n_features == 3) {
               fno_input_tensor[0][i][j][k] = NormalizeEnergyDensity(ed, tau0);
-              // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
-              fno_input_tensor[1][i][j][k] = 0;
-              fno_input_tensor[2][i][j][k] = 0;
+              fno_input_tensor[1][i][j][k] = vx;
+              fno_input_tensor[2][i][j][k] = vy;
           }
           else {JSWARN<<" Not enough FNO features edensity, vx,vy ... to be used further in JETSCAPE !"; exit(-1);}
         }
@@ -324,6 +328,11 @@ void FnoHydro::EvolveHydro() {
 
             int preq_glob_index = GetPreqCellIndex(GetPreqIdX(x_In),GetPreqIdY(y_In),GetPreqIdEta(eta_In));
             double ed = pre_eq_ptr->e_[preq_glob_index];
+            // Real primed velocity -- see the 2D+1 branch above for why this
+            // is safe (and a no-op) for NullPreDynamics too.
+            double vx = pre_eq_ptr->ux_[preq_glob_index];
+            double vy = pre_eq_ptr->uy_[preq_glob_index];
+            double vz = pre_eq_ptr->ueta_[preq_glob_index];
 
             // n_features == 5: (energy_density, temperature, vx, vy, vz);
             // n_features == 4: (energy_density, vx, vy, vz) -- implicit
@@ -336,17 +345,15 @@ void FnoHydro::EvolveHydro() {
 
                 fno_input_tensor[0][i][j][l][k] = NormalizeEnergyDensity(ed, tau0);
                 fno_input_tensor[1][i][j][l][k] = T;
-                // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
-                fno_input_tensor[2][i][j][l][k] = 0;
-                fno_input_tensor[3][i][j][l][k] = 0;
-                fno_input_tensor[4][i][j][l][k] = 0;
+                fno_input_tensor[2][i][j][l][k] = vx;
+                fno_input_tensor[3][i][j][l][k] = vy;
+                fno_input_tensor[4][i][j][l][k] = vz;
             }
             else if (n_features == 4) {
                 fno_input_tensor[0][i][j][l][k] = NormalizeEnergyDensity(ed, tau0);
-                // only for null preq module ... extend here at some point ... when a real dynamic evolution is used and how to get the first time-step ....
-                fno_input_tensor[1][i][j][l][k] = 0;
-                fno_input_tensor[2][i][j][l][k] = 0;
-                fno_input_tensor[3][i][j][l][k] = 0;
+                fno_input_tensor[1][i][j][l][k] = vx;
+                fno_input_tensor[2][i][j][l][k] = vy;
+                fno_input_tensor[3][i][j][l][k] = vz;
             }
             else {JSWARN<<" Not enough FNO features edensity, vx,vy,vz ... to be used further in JETSCAPE for a 3D+1 model!"; exit(-1);}
           }
@@ -458,6 +465,8 @@ void FnoHydro::EvolveHydro() {
   static int fno_event_counter = 0;
   WritePeakTemperatureDiagnostics(
       "peak_temperature_event" + std::to_string(fno_event_counter) + ".csv", full_ntau);
+  WriteEtaProfileDiagnostics(
+      "eta_profile_event" + std::to_string(fno_event_counter) + ".csv", full_ntau);
   ++fno_event_counter;
 
   PassHydroEvolutionHistoryToFramework();
@@ -468,6 +477,34 @@ void FnoHydro::EvolveHydro() {
 
   clearSurfaceCellVector();
   FindAConstantTemperatureSurface(freezeout_temperature, surfaceCellVector_);
+
+  // Diagnostic: eta distribution of the found surface itself (count and
+  // summed |d3sigma_mu[0]|, the Cooper-Frye normal component that mainly
+  // sets yield). WriteEtaProfileDiagnostics already showed the raw
+  // energy-density field is smooth in eta at every tau step, so this checks
+  // whether a central-eta pile-up (seen in the final sampled-hadron rapidity
+  // spectrum) instead enters at surface construction, vs. further
+  // downstream in iSS's own Cooper-Frye sampling.
+  if (Is3DPlus1()) {
+    std::vector<long long> count_per_bin(neta_fno, 0);
+    std::vector<double> dsigma_per_bin(neta_fno, 0.0);
+    int out_of_range = 0;
+    for (const auto &cell : surfaceCellVector_) {
+      int bin = static_cast<int>(std::round((cell.eta - eta_min_fno) / deta_fno));
+      if (bin < 0 || bin >= neta_fno) { ++out_of_range; continue; }
+      ++count_per_bin[bin];
+      dsigma_per_bin[bin] += std::fabs(cell.d3sigma_mu[0]);
+    }
+    std::ofstream f("surface_eta_profile_event" + std::to_string(fno_event_counter - 1) + ".csv");
+    f << "eta_bin,eta_value,n_surface_cells,sum_abs_dsigma0\n";
+    for (int b = 0; b < neta_fno; ++b) {
+      f << b << "," << (eta_min_fno + b * deta_fno) << "," << count_per_bin[b]
+        << "," << dsigma_per_bin[b] << "\n";
+    }
+    f.close();
+    JSINFO << "Wrote surface eta-profile diagnostic (" << out_of_range
+           << " surface cells outside the FNO eta grid range).";
+  }
 
   output.reset();
 
@@ -523,6 +560,62 @@ void FnoHydro::WritePeakTemperatureDiagnostics(const std::string &out_path, int 
   }
   f.close();
   JSINFO << "Wrote peak-temperature diagnostics to " << out_path;
+}
+
+void FnoHydro::WriteEtaProfileDiagnostics(const std::string &out_path, int full_ntau) {
+  if (!Is3DPlus1()) return;
+
+  torch::Tensor flattened = torch::squeeze(output, 0);  // [feat, nx, ny, neta, ntau]
+  int tau_axis = flattened.dim() - 1;
+
+  std::vector<int> steps_to_dump;
+  int stride = std::max(1, full_ntau / 12);
+  for (int k = 0; k < full_ntau; k += stride) steps_to_dump.push_back(k);
+  if (steps_to_dump.empty() || steps_to_dump.back() != full_ntau - 1)
+    steps_to_dump.push_back(full_ntau - 1);
+
+  // Raw (un-normalized) vz channel -- always the last feature channel for
+  // both n_features==4 (e,vx,vy,vz) and n_features==5 (e,T,vx,vy,vz) --
+  // averaged over x,y per eta bin, to check whether the model's predicted
+  // longitudinal flow actually grows with |eta| (as real Bjorken-like flow
+  // should) or stays collapsed near the zero-velocity initial condition
+  // EvolveHydro's input construction currently hardcodes (see fno_input_tensor
+  // channels 1.. there).
+  int vz_channel = n_features - 1;
+
+  std::ofstream f(out_path);
+  f << "k,tau_fm,eta_index,eta_value,sum_energy_density_GeV_fm3,max_energy_density_GeV_fm3,mean_vz\n";
+  for (int k : steps_to_dump) {
+    torch::Tensor step_channel0 = flattened.select(tau_axis, k).select(0, 0).contiguous();  // [nx, ny, neta]
+    torch::Tensor step_vz = flattened.select(tau_axis, k).select(0, vz_channel).contiguous();  // [nx, ny, neta]
+    torch::Tensor mean_vz_over_xy = step_vz.mean(std::vector<int64_t>{0, 1});
+    int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
+    double tau_phys = bulk_info.Tau0() + bulk_info.dtau * k_local;
+
+    torch::Tensor denorm;
+    if (energy_density_normalization == "none") {
+      denorm = step_channel0;
+    } else if (energy_density_normalization == "etau75_3d") {
+      torch::Tensor base = torch::clamp_min(step_channel0 / (tau_phys + 1e-6), 0.0);
+      denorm = torch::pow(base, 4.0 / 3.0);
+    } else {
+      JSWARN << "Unsupported energy_density_normalization in WriteEtaProfileDiagnostics: "
+             << energy_density_normalization;
+      exit(-1);
+    }
+
+    torch::Tensor sum_over_xy = denorm.sum(std::vector<int64_t>{0, 1});
+    torch::Tensor max_over_xy = std::get<0>(denorm.reshape({-1, neta_fno}).max(0));
+
+    for (int l = 0; l < neta_fno; ++l) {
+      double eta_val = eta_min_fno + l * deta_fno;
+      f << k << "," << tau_phys << "," << l << "," << eta_val << ","
+        << sum_over_xy[l].item<float>() << "," << max_over_xy[l].item<float>()
+        << "," << mean_vz_over_xy[l].item<float>() << "\n";
+    }
+  }
+  f.close();
+  JSINFO << "Wrote eta-profile diagnostics to " << out_path;
 }
 
 float FnoHydro::NormalizeEnergyDensity(float raw_ed, double tau_phys) const {
