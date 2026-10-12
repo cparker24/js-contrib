@@ -467,6 +467,9 @@ void FnoHydro::EvolveHydro() {
       "peak_temperature_event" + std::to_string(fno_event_counter) + ".csv", full_ntau);
   WriteEtaProfileDiagnostics(
       "eta_profile_event" + std::to_string(fno_event_counter) + ".csv", full_ntau);
+  WriteEtaFreezeoutApproachDiagnostic(
+      "eta_freezeout_approach_event" + std::to_string(fno_event_counter) + ".csv",
+      full_ntau);
   ++fno_event_counter;
 
   PassHydroEvolutionHistoryToFramework();
@@ -640,6 +643,71 @@ void FnoHydro::WriteEtaProfileDiagnostics(const std::string &out_path, int full_
   }
   f.close();
   JSINFO << "Wrote eta-profile diagnostics to " << out_path;
+}
+
+void FnoHydro::WriteEtaFreezeoutApproachDiagnostic(const std::string &out_path,
+                                                    int full_ntau) {
+  if (!Is3DPlus1()) return;
+
+  torch::Tensor flattened = torch::squeeze(output, 0);  // [feat, nx, ny, neta, ntau]
+  int tau_axis = flattened.dim() - 1;
+
+  // Per-eta hottest-cell temperature at every step (not a sparse sample --
+  // need every step to find each slice's own crossing precisely).
+  std::vector<std::vector<float>> temp_by_k_eta(full_ntau,
+                                                 std::vector<float>(neta_fno, 0.0f));
+  for (int k = 0; k < full_ntau; ++k) {
+    torch::Tensor step_channel0 =
+        flattened.select(tau_axis, k).select(0, 0).contiguous();  // [nx, ny, neta]
+    int k_local = (k == 0) ? 0 : ((k - 1) % ntau_fno) + 1;
+    double tau_phys = bulk_info.Tau0() + bulk_info.dtau * k_local;
+
+    torch::Tensor max_ed_raw =
+        std::get<0>(step_channel0.reshape({-1, neta_fno}).max(0));  // [neta]
+    for (int l = 0; l < neta_fno; ++l) {
+      float raw = max_ed_raw[l].item<float>();
+      float ed = (energy_density_normalization == "none")
+                     ? raw
+                     : DenormalizeEnergyDensity(raw, tau_phys);
+      temp_by_k_eta[k][l] = GetTemperatureFromEos(ed);
+    }
+  }
+
+  std::ofstream f(out_path);
+  f << "eta_bin,eta_value,crossed,crossing_k,crossing_tau_fm,"
+    << "T_last_prefreeze_GeV,cooling_rate_dT_dtau_GeV_per_fm\n";
+  for (int l = 0; l < neta_fno; ++l) {
+    int crossing_k = -1;
+    for (int k = 0; k < full_ntau; ++k) {
+      if (temp_by_k_eta[k][l] <= freezeout_temperature) {
+        crossing_k = k;
+        break;
+      }
+    }
+    double eta_val = eta_min_fno + l * deta_fno;
+    if (crossing_k < 2) {
+      // Never crossed within the window, or crossed too early for a
+      // 2-point finite difference right before it -- report what we can.
+      f << l << "," << eta_val << "," << (crossing_k >= 0 ? 1 : 0) << ","
+        << crossing_k << ",,,"
+        << "\n";
+      continue;
+    }
+    int k_local_hi = (crossing_k - 1 == 0) ? 0 : (((crossing_k - 1) - 1) % ntau_fno) + 1;
+    int k_local_lo = (crossing_k - 2 == 0) ? 0 : (((crossing_k - 2) - 1) % ntau_fno) + 1;
+    double tau_hi = bulk_info.Tau0() + bulk_info.dtau * k_local_hi;
+    double tau_lo = bulk_info.Tau0() + bulk_info.dtau * k_local_lo;
+    double crossing_tau = bulk_info.Tau0() + bulk_info.dtau *
+        ((crossing_k == 0) ? 0 : ((crossing_k - 1) % ntau_fno) + 1);
+    float T_hi = temp_by_k_eta[crossing_k - 1][l];
+    float T_lo = temp_by_k_eta[crossing_k - 2][l];
+    double cooling_rate = (tau_hi > tau_lo) ? (T_hi - T_lo) / (tau_hi - tau_lo) : 0.0;
+
+    f << l << "," << eta_val << ",1," << crossing_k << "," << crossing_tau << ","
+      << T_hi << "," << cooling_rate << "\n";
+  }
+  f.close();
+  JSINFO << "Wrote eta freeze-out approach diagnostic to " << out_path;
 }
 
 float FnoHydro::NormalizeEnergyDensity(float raw_ed, double tau_phys) const {

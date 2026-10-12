@@ -140,6 +140,21 @@ private:
   // 3D+1 only (Is3DPlus1()); a no-op otherwise.
   void WriteEtaProfileDiagnostics(const std::string &out_path, int full_ntau);
 
+  // Diagnostic: for each eta bin, finds that slice's OWN hottest-cell
+  // temperature crossing of freezeout_temperature (every step, not the
+  // sparse sample WriteEtaProfileDiagnostics uses) and the local cooling
+  // rate (dT/dtau, finite-differenced over the 2 steps immediately before
+  // that crossing) -- unlike a fixed global tau window, this compares each
+  // eta slice's dynamics at the moment that actually matters for its own
+  // piece of the freeze-out surface. Follow-up to the central-rapidity-peak
+  // investigation: checks whether the model's behavior right as each slice
+  // approaches ITS OWN freeze-out (where training targets, truncated per
+  // event, may have given the model uneven exposure across eta) is where
+  // the eta-dependence in the surface's Cooper-Frye weight actually
+  // originates, rather than a generic mid-evolution rate difference.
+  // 3D+1 only; a no-op otherwise.
+  void WriteEtaFreezeoutApproachDiagnostic(const std::string &out_path, int full_ntau);
+
   // Hottest-cell physical temperature (GeV) at step k of the finished
   // `output` tensor, matching the denormalization WritePeakTemperatureDiagnostics
   // and PassHydroEvolutionHistoryToFramework both use.
