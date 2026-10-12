@@ -67,7 +67,8 @@ a particlize file uses it): its frame count and times then come from MUSIC's gri
 ``frames_identical`` with the two checks built on it (same initial condition, droplets
 applied) is gone, as are the jet leg's ``jet_edge_e_max``, ``jet_edge_e_max_eta`` and
 ``jet_hit_edge`` (``n_hit_edge["jet"]`` is None).  The background is still read once per
-run: its hash recognises a reused one.
+run: its hash recognises a reused one.  MUSIC_2 then does not store its evolution at all
+(``set_store_evolution(False)``, music4gpu): its frame count and grid stay in its metadata.
 
 Usage (see example/prod_AuAu_0_10_jet/run_prod_jet.py)
 -----------------------------------------------------
@@ -299,6 +300,8 @@ class PairH5Writer:
                 "bulk_info and Matter/LBT would see no medium. Set "
                 "<Hydro><MUSIC><dump_hydro_only>0 (the jet leg is switched here).")
         jet.set_dump_hydro_only(True)
+        if hasattr(jet, "set_store_evolution"):    # read_jet=False: nothing reads it
+            jet.set_store_evolution(self._read_jet)
         for name, leg in (("bg", bg), ("jet", jet)):
             leg.set_skip_surface(name not in self._keep_surface)
 

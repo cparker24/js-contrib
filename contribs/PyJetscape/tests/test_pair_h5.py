@@ -283,6 +283,7 @@ class _Music:
     def __init__(self, name, evo, liquefier=None):
         self.name, self.evo, self.liq = name, evo, liquefier
         self.dump, self.skip, self.cleared = False, False, 0
+        self.store = True
 
     def GetId(self):
         return self.name
@@ -298,6 +299,9 @@ class _Music:
 
     def set_skip_surface(self, v):
         self.skip = bool(v)
+
+    def set_store_evolution(self, v):
+        self.store = bool(v)
 
     def get_native_evolution_numpy(self, tau_stride=1):
         return self.evo[::tau_stride]
@@ -560,6 +564,7 @@ def test_read_jet_off_takes_the_jet_leg_from_musics_metadata(tmp_path):
         skip, jet = run("skip", read_jet=False, edge_e_threshold=0.3)
     assert run.n_hit_edge == {"bg": 4, "jet": None}           # the jet leg: not measured
     assert jet_read.reads == 4 and jet.reads == 0
+    assert jet_read.store and not jet.store        # MUSIC_2 stores no evolution
     assert jet.cleared == 4                        # the native store is still released
     assert [k for _, _, k in skip] == [k for _, _, k in read]
     for (i, ds, _), (j, dr, _) in zip(skip, read):
