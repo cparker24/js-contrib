@@ -125,6 +125,17 @@ C ~−11 core-s per event. Should also stop the writer slowing down during long 
 - **X-SCAPE:** exposed through MusicWrapper and pybind, like `set_dump_hydro_only`.
 - **js-contrib:** `PairH5Writer.attach` turns it off on MUSIC_2 when `read_jet=False`.
 - **Gain:** −2.8 s per particlize-only event, and no ~2 GB jet-leg store per job.
+- **Done 2026-10-11 (GB10):**
+  - Commits: MUSIC4GPU `089c682` (`store_hydro_info_frames`, a `DATA` parameter, default 1),
+    X-SCAPE `cf9c91e2` (`MpiMusic::set_store_evolution`, applied at every evolution's start),
+    js-contrib `d6b812c` (binding, `attach`, test).
+  - `run_prod_jet.py --events 4 --seed 1 --reuse 2 --write-particlize both --particlize-only`,
+    phase 2 build against phase 3 build: all 29 datasets of the particlize file identical, the
+    same MUSIC_2 step counts.
+  - Wall time 88.5 → 87.9 s. On the GB10 the pack is zero-copy, so the gain is mostly memory:
+    peak RSS 7.44 → 7.06 GB; the logged process memory at the jet leg 6.4 → 5.1 GB.
+  - The default run (pair + particlize, jet leg read) is unchanged: all datasets of both files
+    identical to the phase 1 baseline, and MUSIC_2 still stores its evolution.
 
 ### Phase 4: A8, MUSIC_2 starting from MUSIC_1's state
 
