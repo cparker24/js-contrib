@@ -407,14 +407,14 @@ All jobs completed: `events_written` and `particlize_events_written` equal the e
         --write-particlize both > /data/camp_pth3.log 2>&1 &
     ```
 
-    60 jobs × 45 events = 2,700 events in 3 rounds of 20 jobs: ~3 h, ~0.6 TB ([README_launch.md](../utils/README_launch.md#10-jobs-per-gpu)).
+    60 jobs × 45 events = 2,700 events in 3 rounds of 20 jobs: ~3 h, ~0.6 TB ([README_launch.md](README_launch.md#10-jobs-per-gpu)).
 
 Raw data on this machine: `~/prod_test/bench/memtest_20261010/` (`REPORT.md`, `summary.jsonl`, per-run monitor and job logs, `correctness.txt`); launcher copy `~/prod_test/launch_2gpu_memtest.sh`.
 
 <a id="music2restart"></a>
 ## The CPU fixes A1–A9 and the MUSIC_2 restart: `cu124-music2restart` (2026-10-12)
 
-The question: how many more events/h do the bit-identical CPU fixes give on this machine at the campaign setting? They are A1–A9 of [REPORT_CPU_GPU.md](Plans/REPORT_CPU_GPU.md) §5. A8 is MUSIC_2 starting from MUSIC_1's state at the last freeze-out step before the liquefier's τ_delay. The comparison is with the 10-jobs-per-GPU numbers of 2026-10-11: 796 events/h, and 917 with `--particlize-only`.
+The question: how many more events/h do the bit-identical CPU fixes give on this machine at the campaign setting? They are A1–A9 of [REPORT_CPU_GPU.md](REPORT_CPU_GPU.md) §5. A8 is MUSIC_2 starting from MUSIC_1's state at the last freeze-out step before the liquefier's τ_delay. The comparison is with the 10-jobs-per-GPU numbers of 2026-10-11: 796 events/h, and 917 with `--particlize-only`.
 
 **Images:**
 
@@ -514,7 +514,7 @@ Raw data on this machine: `~/prod_test/bench/music2restart_20261012/`: `REPORT.m
 <a id="oo-grid"></a>
 ## O+O campaign: the standard ±15 fm MUSIC grid vs ±10.5 fm (2026-10-12)
 
-The question: what does an O+O campaign (`prod_OO_isr`) give on this machine with the new image, and with the smaller MUSIC grid that [REPORT_CPU_GPU.md](Plans/REPORT_CPU_GPU.md) §5–6 suggests (C1)?
+The question: what does an O+O campaign (`prod_OO_isr`) give on this machine with the new image, and with the smaller MUSIC grid that [REPORT_CPU_GPU.md](REPORT_CPU_GPU.md) §5–6 suggests (C1)?
 - **C1** is ±10.5 fm instead of ±15 fm in x and y: 70 × 70 instead of 100 × 100 transverse cells, the same 0.3 fm cells and the same η grid.
 - The O+O fireball stays within |x|, |y| ≲ 7 fm, and the 64 × 64 × 32 output grid reaches ±9.84 fm.
 - The report asked for a physics check before switching: a few hundred events with no grid-edge hits, and unchanged observables.
@@ -608,5 +608,47 @@ The question: what does an O+O campaign (`prod_OO_isr`) give on this machine wit
 
   ~7,300 events/h with default outputs, so 6,400 events in under an hour. The upload then has to keep up with ~220 GB/h (~61 MB/s), against the ~80 MB/s measured on 2026-10-05: just enough, with little margin. `--min-free` stops the campaign if it falls behind. Without the upload, 6,400 events are ~190 GB on `/data`; hadrons only stays at ~0.15 MB per event.
 - **To make it the default,** the production XML in js-contrib (`prod_OO_isr/OO_MCGlauber_MUSIC_isr.xml`) would need `grid_max_x/y` 10.5. That isn't done here.
+
+**Where O+O's CPU goes now** (follow-up, same day). The O+O runs are host-bound, so the question is which CPU work sets their rate.
+- **Profile of one job inside a running campaign:** 8/GPU, OMP 3, default outputs, 30 events per job.
+  - The containers got SYS_PTRACE, and py-spy ran as root inside the GPU0 container on the seed-1 job, from 30 s to 150 s.
+  - The runs gave 7,217 events/h (±10.5 fm) and 4,017 (±15 fm), the same as without the profiler.
+  - The profiled job used 9.7 and 17.9 core-s per event, matching the cgroup's 10.3 and 18.5 for the whole run.
+
+| stage, core-s per event (share) | ±10.5 fm | ±15 fm |
+|---|---|---|
+| **freeze-out: Cornelius search** | 3.65 | 7.95 |
+| **freeze-out: GPU → host copy of both grids** (`sync_arena_from_gpu_readonly`) | 1.63 | 4.09 |
+| **freeze-out together** | **5.3 (54 %)** | **12.0 (67 %)** |
+| writer: HDF5 compress + write / resample to the output grid | 0.76 / 0.64 | 1.28 / 1.04 |
+| medium lookups for Matter (`GetHydroInfo`) | 0.99 | 0.59 |
+| MUSIC → framework copy (`bulk_info`) | 0.68 | 0.77 |
+| string deposition | 0.56 | 0.68 |
+| frames to memory (pack), RK host side, per-event init, Matter, other | 0.7 | 1.4 |
+| **total** | **9.7** | **17.9** |
+
+- **In the campaign the freeze-out costs about twice what it does in a job alone.**
+  - A job alone on the ±10.5 fm grid, default outputs: Cornelius 1.9 + copy 0.7 core-s per event, 6.4 core-s per event in total (`table_oo.md`).
+  - These stages stream both grids through memory, and 16 jobs compete for its bandwidth.
+- **What the freeze-out time is spent on** (main-thread samples of the profiled job, `fo_split2.py`):
+
+| share of the freeze-out time | ±10.5 fm | ±15 fm |
+|---|---|---|
+| copying both grids into the "previous step" buffers (`store_previous_step_for_freezeout`: `vector<double>` assignments of all 21 fields) | 43 % | 53 % |
+| GPU → host copy of both grids (21 fields, float → double) | 31 % | 34 % |
+| the scan over the grid (`getCell`, `isfinite`, indexing) | 12 % | 6 % |
+| Cornelius' geometry (surface elements) | 14 % | 7 % |
+
+- **About three quarters of the freeze-out is copying, not surface finding.**
+  - Every 5 steps MUSIC copies both grids from the GPU, runs Cornelius on them and on the previous freeze-out step's copies, then copies both grids again into those buffers (`evolve.cpp`, freeze-out block).
+  - The next freeze-out step overwrites the host grids from the GPU anyway (`host_curr_fresh_` is reset after every RK step).
+- **Cheaper than B2, bit-identical** (not implemented, not measured):
+  1. **Double-buffer instead of copying the previous step.** Sync from the GPU into two alternating buffer pairs; the previous freeze-out step is then already in the other pair. ~−1.2 core-s per event on ±10.5 fm, ~−4 on ±15 fm. Small effort.
+     - Code that reads the host grids after the freeze-out step must sync them itself. `take_checkpoint` reads `max_energy_density_raw(arena_current)` at exactly that point.
+  2. **Copy only ε from the GPU for the scan, and the full fields only for the cells of cubes that the surface crosses** (a gather kernel, CUDA and Metal). Saves most of the 1.6 core-s of the grid copy. Moderate effort.
+  - Together: ~−30 % CPU per event. That would take O+O from ~7,300 toward the GPU limit of ~10,000 events/h (+25–35 %, estimate), adding almost no GPU work.
+- **B2 after that** (Cornelius on the GPU) would save only the remaining ~1.3 core-s (scan and geometry) and add GPU time just when the GPU becomes the limit: not worth it on this machine. It is still worth it where a GPU has few cores.
+- **Au+Au** uses the same freeze-out code, but its productions are within 2–9 % of their GPU limits (section above): at most the two-stage campaign's ~9 %.
+- Profiles and scripts: `C10_spy/`, `C15_spy/` (`run_oo_spy.sh`), `prof_*_g15`, `prof_*_g10p5` (`chain3.sh`), `stage_cores.py`, `fo_split2.py`, `make_table_oo.py`.
 
 Raw data on this machine: `~/prod_test/bench/oo_grid_20261012/`: `REPORT.md`, `summary.jsonl`, run directories, the two XMLs, `pe_*.txt`, `odd_*.txt`, `bulk_hadrons.txt`, `cmp_*.txt`, `chain.sh` and `chain2.sh`.

@@ -34,7 +34,7 @@ which side, CPU or GPU, would raise the event rate on which machine.
 
   So CPU work sets the rate here, and on any machine with few or slow cores per GPU. GPU work sets it
   on the GB10 and the M3 Max, and here too once the CPU work has dropped by about a third.
-- **What would raise throughput** (§5, none implemented yet):
+- **What would raise throughput** (§5, none implemented yet; *update 2026-10-12: A1–A9 are implemented and measured, and C1 is tested; see §8*):
   - **(A) Cheap fixes with bit-identical output** cut the CPU per event by 19 % (two-stage campaign)
     to 30 % (hydro only):
     - in the writer, recognise a reused background instead of resampling it again, and do the resampling
@@ -409,6 +409,74 @@ is ~1,090 events/h (5.9 GPU-s per event at 90 %), 19 % above the 917 measured.
 +15 % events/h, −11 % CPU per event, 8 GB less host memory at the peak and 2.5× less disk and upload
 (~24 MB/s at 917 events/h, against ~52 MB/s for the full output). On GPU-limited machines (GB10,
 M3 Max) the GPU work is the same, so mainly the disk, upload and memory savings remain.
+
+## 8. Update 2026-10-12: A1–A9 and C1 measured, and what is left
+
+Measured on this machine with `jhputschke/xscape-prod:cu124-music2restart` (`d4acf127186f`, js-contrib `02bed42`, branch `music2_restart`). The details are in [BENCHMARK_2x3090.md](BENCHMARK_2x3090.md), sections "The CPU fixes A1–A9 and the MUSIC_2 restart" and "O+O campaign".
+
+**Throughput** (events/h by makespan, the launcher settings of each production):
+
+| production | before (§3/§4) | now | change |
+|---|---|---|---|
+| Au+Au two-stage campaign, 10/GPU | 796 | **1,121** (965 without the restart) | +41 % |
+| two-stage campaign, `--particlize-only` | 917 | **1,237** | +35 % |
+| Au+Au hydro only, 12/GPU | 1,223 | **1,601** | +31 % |
+| O+O, ±15 fm, 8/GPU, hadrons only | 3,505 (3,534 on 2026-10-12) | **3,798** | +7 % |
+| O+O, ±15 fm, 8/GPU, default outputs, 60 events per job | (R5 at 12/GPU: 3,657) | **4,006** | |
+| O+O, **±10.5 fm** (C1, `--user-xml`), default outputs, 60 events per job | – | **7,282** | +82 % over ±15 fm |
+
+- **Outputs are bit-identical** to the old image and between restart and no restart, except `source/flux` (≤ 7 ulp; it differs between two runs of the same image too).
+- **C1 passed the physics check:**
+  - no grid-edge hit in 2,994 events;
+  - the hydro and the freeze-out surface are the same to float32 rounding in 1,020 compared events, a few near-vacuum cells aside;
+  - the jet and bulk hadrons agree as well as two runs on the same grid do.
+- **The CPU estimates of §5 held.** For one two-stage campaign job alone, A1–A8 were estimated at −40 core-s per event; measured −39.9 (74 → 34 core-s; 45.1 → 22.9 s per event).
+- **The fixes also removed GPU work,** which §4 had not expected. GPU-s per event:
+  - two-stage campaign 6.00 → 5.29;
+  - particlize only 5.94 → 5.16;
+  - hydro only 4.94 → 3.95.
+
+  So the GPU limits rose above §4's estimates.
+
+**Distance to the GPU limit now** (90 % busy, from the measured GPU-s per event):
+
+| production | §4/§5 estimate | GPU limit now | measured | distance |
+|---|---|---|---|---|
+| two-stage campaign | ~1,080; ~1,170 with A8 | ~1,225 | 1,121 | 91 %: ~9 % left |
+| two-stage, particlize file only | ~1,090 | ~1,255 | 1,237 | 98 % |
+| hydro only | ~1,310 | ~1,640 | 1,601 | 98 % |
+| O+O ±15 fm | ~5,200 | ~5,900 | 4,006 | 68 % |
+| O+O ±10.5 fm | ~2× ±15 fm | ~10,000 | 7,282 | 73 % |
+
+The Au+Au productions are now GPU-bound or nearly so; only C3/C4 (less GPU work) raise them further. O+O is still host-bound: the GPUs are ~65 % busy, and its events/h follow its core-s per event.
+
+**Correction to B2: the O+O freeze-out is mostly copying.**
+- Profiled inside a running campaign (one job of 16; `bench/oo_grid_20261012/C10_spy`, `C15_spy`), the freeze-out step is 54 % of a job's CPU on ±10.5 fm (5.3 of 9.7 core-s per event) and 67 % on ±15 fm (12.0 of 17.9).
+- Of that:
+
+  | share of the freeze-out time | ±10.5 fm | ±15 fm |
+  |---|---|---|
+  | `store_previous_step_for_freezeout`: copying both grids into the "previous step" buffers | 43 % | 53 % |
+  | the GPU → host copy of both grids (21 fields, float → double) | 31 % | 34 % |
+  | the scan over the grid | 12 % | 6 % |
+  | Cornelius' geometry | 14 % | 7 % |
+
+- In a campaign these copies cost about twice what they do in a job alone (memory bandwidth). That is why §2's single-job table understated them.
+- Two new bit-identical changes come before B2:
+
+| | change | where | saves (core-s/event, O+O campaign) | effort |
+|---|---|---|---|---|
+| A10 | sync the GPU state into two alternating buffer pairs instead of copying the previous step's fields after every search (any later reader of the host grids, e.g. `take_checkpoint`'s ε max, syncs itself) | MUSIC4GPU `evolve.cpp` | ±10.5 fm ~1.2, ±15 fm ~4 | small |
+| A11 | copy only ε from the GPU for the scan, and gather the full fields only for the cells of cubes the surface crosses | MUSIC4GPU (CUDA + Metal kernel) | most of the copy's 1.6 (±10.5 fm) | moderate |
+
+- **Together ~−30 % CPU per event for O+O:** from ~7,300 toward the ~10,000 GPU limit (+25–35 %, estimate), with almost no GPU work added.
+- **B2 then** saves only the remaining ~1.3 core-s and adds GPU time just as the GPU becomes the limit. It stays useful only where a GPU has few cores.
+- **Au+Au** runs the same code, so A10/A11 apply there too, but it is within 2–9 % of its GPU limits.
+
+**Revised order:**
+- **O+O:** C1 (XML) → A10 → A11; B2 only for core-poor machines.
+- **Au+Au:** C3/C4 for more events/h on this machine.
+- **GB10 / M3 Max:** C1 and C3/C4; A8's GPU part is in.
 
 ## Method and files
 
