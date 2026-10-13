@@ -160,6 +160,25 @@ contributing to the peak, stopping the evolution earlier (a *higher*
 freeze-out temperature, further from that undertrained regime) should reduce
 it.
 
+**This turned out not to be a hypothetical "higher than usual" value to try --
+it's the model's actual training cutoff.** Checked all 18 training-data XML
+configs under `/home/cparker/jetscape-docker/xmls/` (every centrality bin:
+0-10, 10-20, 20-30, 30-40, including the "withT" and "finegrid" variants):
+**none of them override `freezeout_temperature`** in their `<Hydro><MUSIC>`
+block, so every one of them silently inherited `jetscape_main.xml`'s MUSIC
+default of **0.150 GeV**. Separately, that same `jetscape_main.xml` also
+defines independent `<FNO>`/`<FNOROOIN>` module defaults of **0.136 GeV**
+(js-contrib's own FnoHydro defaults) -- a plausible-looking Cooper-Frye
+literature convention that nothing ever cross-checked against what the
+training data was actually generated with. Every live-inference config built
+during this investigation (including all of this document's earlier
+sections) explicitly used 0.136, following that second, unrelated
+convention. So the entire original training dataset, across every
+centrality bin, has real (non-padded) MUSIC targets only down to 150 MeV --
+and every comparison run before this parameter study had been asking the
+model to extrapolate ~14 MeV past where it actually had training
+supervision, the whole time.
+
 Tested with `config/fno_3d_particlization_30_40_{fno,music}_Tfo150.xml` --
 siblings of the baseline 30-40% configs with `freezeout_temperature` raised
 from 0.136 to 0.150 GeV in both the `<FNO>` block and the embedded priming
@@ -186,15 +205,47 @@ ensemble sizes; bin errors <1%, so this is statistically solid, not noise):
 **Conclusion**: raising the freeze-out temperature meaningfully *shrinks* the
 central peak -- roughly a 30% relative reduction in the narrow window, ~46%
 in the wider one, confirmed at both single-event and ensemble level -- but
-does **not** eliminate it; a real ~9-24% peak remains even at 150 MeV. This
-is real evidence for the training-truncation hypothesis (running closer to
-the undertrained low-temperature regime makes the artifact worse), but it is
-only a partial explanation, not the whole mechanism. As expected, raising
+does **not** eliminate it; a real ~9-24% peak remains even at 150 MeV, i.e.
+even running exactly at the model's real training cutoff rather than below
+it. That residual is real evidence the training-truncation hypothesis is
+only a partial explanation, not the whole mechanism -- plausibly because
+individual training *events* still stop at different actual tau/temperature
+(each event's own MUSIC run exits once its own hottest cell crosses 150 MeV,
+so shorter-lived events contribute fewer late-time examples than
+longer-lived ones), leaving uneven exposure even at the nominal cutoff
+itself. See the testbed section below for a more direct attempt at closing
+this gap entirely. As expected, raising
 Tfo also reduces total yield since the evolution stops earlier (a smaller,
 earlier freeze-out surface) -- only the *shape*/peak-ratio was compared
 between the two settings above, not absolute normalization, since a higher
 freeze-out temperature is expected to change normalization regardless of the
 peak question.
+
+## Testbed: generating training data with a 100 MeV cutoff (in progress)
+
+If the residual peak is driven by the model's training supervision running
+out at 150 MeV, a model trained with real (non-padded) targets further below
+that -- with headroom past the usual 136-150 MeV Cooper-Frye convention --
+might avoid the issue more completely than just raising inference-time Tfo
+against the existing model can. As a first step, generating a small pilot
+training dataset at 30-40% centrality with MUSIC's own `freezeout_temperature`
+explicitly lowered to 0.100 GeV (so MUSIC's own evolution loop -- which
+exits once `evolve.cpp`'s `FindFreezeOutSurface_Cornelius`/
+`FreezeOut_equal_tau_Surface` report the whole grid frozen, the same
+mechanism that stopped the original training runs at the 150 MeV default --
+continues further before stopping).
+
+Config: `/home/cparker/jetscape-docker/xmls/AuAu_30_40_Tfo100.xml`, cloned
+from the original `AuAu_50ev_30-40.xml` training config (same grid/seed/
+physics settings, `RootBulkWriter` `ntau=0` so output length adapts
+automatically to however long MUSIC now runs), with `freezeout_temperature`
+explicitly set to 0.100 GeV and `nEvents` reduced to 5 for a pilot run (full
+evolution to a lower temperature takes noticeably longer per event than the
+original 150 MeV cutoff). Run via the generic `runJetscape` driver (automatic
+task-list determination from the XML, no bespoke driver `.cc` needed, same
+as the original training-data generation).
+
+Status: run in progress; results not yet analyzed.
 
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
@@ -224,11 +275,22 @@ committed. The residual ~13-14% central peak is real, reproducible (also
 confirmed at 10-20% centrality), and traced to the freeze-out surface's
 geometry (not the bulk hydro field, not iSS's sampling, not particle
 species), with a plausible and now partially-confirmed link to eta-dependent
-model behavior near the per-cell freeze-out crossing: raising the freeze-out
-temperature from 136 to 150 MeV reduces the peak by roughly 30-46%
-(confirmed at ensemble level) without eliminating it, supporting the
-training-truncation hypothesis as a real but partial contributor. It does
-not appear to meaningfully distort physics conclusions drawn from this
-pipeline (both FNO and MUSIC produce smooth, physically reasonable spectra;
-the peak is a ~9-14% effect on top of good agreement in slope and
-normalization), but a full mechanistic explanation remains open.
+model behavior near the per-cell freeze-out crossing. Root cause of why 136
+vs 150 MeV matters at all: **the entire original training dataset (every
+centrality bin) was generated with MUSIC's own default freeze-out
+temperature of 0.150 GeV, never explicitly overridden in any training
+config** -- while every live-inference config in this investigation used
+0.136 GeV, an independent, unrelated `<FNO>`/`<FNOROOIN>` module default that
+was never cross-checked against the training setup. Raising inference-time
+Tfo to 150 MeV (i.e. actually matching the real training cutoff, not an
+arbitrary higher value) reduces the peak by roughly 30-46% (confirmed at
+ensemble level) without eliminating it -- real but partial support for the
+training-truncation hypothesis; the residual suggests individual training
+events' own varying stopping points leave uneven exposure even at the
+nominal cutoff. A pilot training-data generation run with the cutoff pushed
+further, to 100 MeV, is in progress to test whether a model trained with
+that extra headroom avoids the issue more completely. It does not appear to
+meaningfully distort physics conclusions drawn from this pipeline (both FNO
+and MUSIC produce smooth, physically reasonable spectra; the peak is a
+~9-14% effect on top of good agreement in slope and normalization), but a
+full mechanistic explanation remains open.
