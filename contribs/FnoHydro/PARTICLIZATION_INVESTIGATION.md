@@ -140,6 +140,62 @@ gradients between neighboring x/y/eta cells too, not just the local time
 derivative at fixed position. Fully closing this would mean replicating or
 instrumenting that 4D construction directly — not done here.
 
+## Cross-check: does the peak persist at a different centrality?
+
+Repeated the same matched-seed (424242) comparison at 10-20% centrality
+(`config/fno_3d_particlization_10_20_{fno,music}.xml`, single event only, not
+yet run as an ensemble). Same signature: within a narrow mid-rapidity window
+the FNO/MUSIC ratio rises from the edges toward center then falls back
+(0.79 / 0.91 / 0.95 / 0.94 / 0.84 / 0.65 bin-by-bin), an ~11% local peak
+relative to its own edges -- consistent in both direction and rough
+magnitude with the ~13-14% found at 30-40%. The effect is not specific to one
+centrality bin.
+
+## Parameter study: raising the freeze-out temperature (136 -> 150 MeV)
+
+Motivation: training targets are truncated/padded once an event approaches
+its own freeze-out, so the model's supervision is weakest right at the low
+end of the freeze-out-temperature range it was trained on. If that's
+contributing to the peak, stopping the evolution earlier (a *higher*
+freeze-out temperature, further from that undertrained regime) should reduce
+it.
+
+Tested with `config/fno_3d_particlization_30_40_{fno,music}_Tfo150.xml` --
+siblings of the baseline 30-40% configs with `freezeout_temperature` raised
+from 0.136 to 0.150 GeV in both the `<FNO>` block and the embedded priming
+`<MUSIC>` block (FNO config), and the `<MUSIC>` block (MUSIC config).
+
+**Same-event check** (seed 424242, nEvents=1, only Tfo changed -- a clean
+A/B test with no event-to-event noise):
+
+| window | Tfo=136 MeV | Tfo=150 MeV |
+|---|---|---|
+| peak/edge, narrow (\|y\|<0.45) | 1.124 (12.4%) | 1.076 (7.6%) |
+| peak/edge, wide (\|y\|<0.75) | 1.388 (38.8%) | 1.230 (23.0%) |
+
+**Ensemble check** (15 FNO events / 5 MUSIC events, matching the baseline
+ensemble sizes; bin errors <1%, so this is statistically solid, not noise):
+
+| window | Tfo=136 MeV (15-event) | Tfo=150 MeV (15-event) |
+|---|---|---|
+| peak/edge, narrow (\|y\|<0.45) | 1.131 (13.1%) | 1.091 (9.1%) |
+| peak/edge, wide (\|y\|<0.75) | 1.440 (44.0%) | 1.239 (23.9%) |
+
+![Final sampled hadron rapidity at Tfo=150 MeV, FNO vs MUSIC -- peak reduced but not eliminated](docs/particlization_investigation/final_sampled_rapidity_Tfo150.png)
+
+**Conclusion**: raising the freeze-out temperature meaningfully *shrinks* the
+central peak -- roughly a 30% relative reduction in the narrow window, ~46%
+in the wider one, confirmed at both single-event and ensemble level -- but
+does **not** eliminate it; a real ~9-24% peak remains even at 150 MeV. This
+is real evidence for the training-truncation hypothesis (running closer to
+the undertrained low-temperature regime makes the artifact worse), but it is
+only a partial explanation, not the whole mechanism. As expected, raising
+Tfo also reduces total yield since the evolution stops earlier (a smaller,
+earlier freeze-out surface) -- only the *shape*/peak-ratio was compared
+between the two settings above, not absolute normalization, since a higher
+freeze-out temperature is expected to change normalization regardless of the
+peak question.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -164,11 +220,15 @@ revisiting this investigation, re-add a per-species dump gated on
 ## Status
 
 The velocity-wiring fix is the real, confirmed bug and is fixed and
-committed. The residual ~13-14% central peak is real, reproducible, and
-traced to the freeze-out surface's geometry (not the bulk hydro field, not
-iSS's sampling, not particle species), with a plausible but not fully
-confirmed link to eta-dependent model behavior near the per-cell freeze-out
-crossing. It does not appear to meaningfully distort physics conclusions
-drawn from this pipeline (both FNO and MUSIC produce smooth, physically
-reasonable spectra; the peak is a ~14% effect on top of good agreement in
-slope and normalization), but a full mechanistic explanation remains open.
+committed. The residual ~13-14% central peak is real, reproducible (also
+confirmed at 10-20% centrality), and traced to the freeze-out surface's
+geometry (not the bulk hydro field, not iSS's sampling, not particle
+species), with a plausible and now partially-confirmed link to eta-dependent
+model behavior near the per-cell freeze-out crossing: raising the freeze-out
+temperature from 136 to 150 MeV reduces the peak by roughly 30-46%
+(confirmed at ensemble level) without eliminating it, supporting the
+training-truncation hypothesis as a real but partial contributor. It does
+not appear to meaningfully distort physics conclusions drawn from this
+pipeline (both FNO and MUSIC produce smooth, physically reasonable spectra;
+the peak is a ~9-14% effect on top of good agreement in slope and
+normalization), but a full mechanistic explanation remains open.
