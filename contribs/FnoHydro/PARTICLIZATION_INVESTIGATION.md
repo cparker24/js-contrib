@@ -221,7 +221,31 @@ between the two settings above, not absolute normalization, since a higher
 freeze-out temperature is expected to change normalization regardless of the
 peak question.
 
-## Testbed: generating training data with a 100 MeV cutoff (in progress)
+**Follow-up: does pushing cleanly past the real cutoff help further?** Since
+150 MeV turned out to be the model's actual training boundary (not a value
+with built-in margin), the Tfo=150 test was still running right at the edge
+of training coverage. Tested 160 MeV (`config/fno_3d_particlization_30_40_{fno,music}_Tfo160.xml`)
+on the same event (seed 424242) to see whether 10 MeV of clean margin inside
+the trained range improves things further:
+
+| window | Tfo=136 MeV | Tfo=150 MeV | Tfo=160 MeV |
+|---|---|---|---|
+| peak/edge, narrow (\|y\|<0.45) | 12.4% | 7.6% | 8.1% |
+| peak/edge, wide (\|y\|<0.75) | 38.8% | 23.0% | 23.8% |
+
+**It plateaus.** 160 MeV is statistically indistinguishable from 150 MeV
+(same event, so this isn't event-to-event noise) -- all of the improvement
+happened going from below the cutoff to at/above it; adding more margin past
+the boundary doesn't shrink the peak any further. This is a useful negative
+result: it means the residual ~8-24% effect isn't simply "too close to the
+edge of training coverage" and wouldn't be fixed by inference-time margin
+alone, however much is added. Whatever is left over is a more fundamental
+limitation -- consistent with the uneven-per-event-exposure explanation
+above, or requiring an actually retrained model (see below) rather than a
+parameter choice against the existing one. (Single-event check only; not yet
+confirmed at ensemble level the way the 150 MeV result was.)
+
+## Testbed: generating training data with a 100 MeV cutoff
 
 If the residual peak is driven by the model's training supervision running
 out at 150 MeV, a model trained with real (non-padded) targets further below
@@ -304,12 +328,19 @@ was never cross-checked against the training setup. Raising inference-time
 Tfo to 150 MeV (i.e. actually matching the real training cutoff, not an
 arbitrary higher value) reduces the peak by roughly 30-46% (confirmed at
 ensemble level) without eliminating it -- real but partial support for the
-training-truncation hypothesis; the residual suggests individual training
-events' own varying stopping points leave uneven exposure even at the
-nominal cutoff. A pilot training-data generation run with the cutoff pushed
-further, to 100 MeV, is in progress to test whether a model trained with
-that extra headroom avoids the issue more completely. It does not appear to
-meaningfully distort physics conclusions drawn from this pipeline (both FNO
-and MUSIC produce smooth, physically reasonable spectra; the peak is a
-~9-14% effect on top of good agreement in slope and normalization), but a
-full mechanistic explanation remains open.
+training-truncation hypothesis. Pushing further to 160 MeV (10 MeV of clean
+margin past the real cutoff) does **not** help any more -- the peak
+plateaus, statistically indistinguishable from the 150 MeV result on the
+same event -- so the residual isn't simply "too close to the training
+edge"; more inference-time margin against the *existing* model won't close
+it further. It's more plausibly driven by individual training events' own
+varying stopping points leaving uneven exposure even at the nominal cutoff,
+or by the surface-geometry mechanism traced earlier. A pilot training-data
+generation run with the cutoff pushed much further, to 100 MeV, completed
+successfully (5 events, 30-40% centrality) as a first step toward testing
+whether an actually retrained model avoids the issue more completely --
+not yet used to train anything. None of this appears to meaningfully distort
+physics conclusions drawn from this pipeline (both FNO and MUSIC produce
+smooth, physically reasonable spectra; the peak is a ~8-14% effect on top of
+good agreement in slope and normalization), but a full mechanistic
+explanation remains open.
