@@ -245,7 +245,26 @@ original 150 MeV cutoff). Run via the generic `runJetscape` driver (automatic
 task-list determination from the XML, no bespoke driver `.cc` needed, same
 as the original training-data generation).
 
-Status: run in progress; results not yet analyzed.
+**Result**: completed successfully (5 events, ~9 minutes total). Output
+`/home/jetscape-user/rootfiles/AuAu_30_40_Tfo100.root` (~388 MB) is
+structurally consistent with the original dataset -- same grid (nx=65,
+ny=65, neta=17, matching the existing raw-grid-plus-one-bin convention
+corrected via `etaslice`/`xyslice: [:-1]` before training), same
+tau_min/dtau/eta_min/deta, nFeatures=5 (energy density, temperature, vx, vy,
+vz). `use_vec=1` confirms the variable-length (`ntau=0`) ragged-array mode
+worked as expected, so there's no fixed-array truncation.
+
+Per-event freeze-out times: 6.68-8.88 fm/c (63-85 tau steps), i.e. real,
+non-padded MUSIC targets extending well past where a 150 MeV cutoff would
+have stopped for comparable events -- confirming the lowered
+`freezeout_temperature` did what was intended (MUSIC's own evolution loop,
+via `evolve.cpp`'s freeze-out-surface check, kept running until the later,
+cooler stopping point instead of the original default).
+
+This is a pilot dataset only (5 events, one centrality bin) -- not yet used
+to train anything. Scaling up (more events, other centrality bins) and
+actually retraining a model against this deeper-coverage data is future
+work, not done here.
 
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
