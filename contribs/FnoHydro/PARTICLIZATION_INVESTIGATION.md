@@ -245,6 +245,39 @@ above, or requiring an actually retrained model (see below) rather than a
 parameter choice against the existing one. (Single-event check only; not yet
 confirmed at ensemble level the way the 150 MeV result was.)
 
+## Does the Tfo=150 MeV improvement hold across centralities?
+
+Ran the same Tfo=150 MeV test (single event, seed 424242) at 10-20% and
+20-30% centrality (`config/fno_3d_particlization_{10_20,20_30}_{fno,music}_Tfo150.xml`),
+to check whether the 30-40% improvement generalizes.
+
+| centrality | peak/edge, narrow (\|y\|<0.45) | peak/edge, wide (\|y\|<0.75) | Tfo=136 narrow, same bin |
+|---|---|---|---|
+| 10-20% | 12.8% | 30.2% | 11.1% (no improvement) |
+| 20-30% | **2.7%** | 17.0% | not tested at 136 |
+| 30-40% | 7.6% | 23.0% | 12.4% (clear improvement) |
+
+**Not uniform.** At 30-40% the fix clearly helps; at 10-20% it makes
+essentially no difference (if anything marginally worse, within single-event
+noise); at 20-30% the peak nearly disappears in the narrow window -- visibly
+the cleanest FNO/MUSIC agreement of any centrality or temperature combination
+tested so far:
+
+![Hadron rapidity, 20-30% centrality, Tfo=150 MeV -- FNO tracks MUSIC closely through the whole shared midrapidity region](docs/particlization_investigation/y_spectrum_20_30_Tfo150.png)
+
+10-20%, by contrast, still shows a visible excess bump at center even at
+150 MeV:
+
+![Hadron rapidity, 10-20% centrality, Tfo=150 MeV -- FNO still shows a mild excess at center](docs/particlization_investigation/y_spectrum_10_20_Tfo150.png)
+
+This means centrality itself is a real variable in whatever's driving the
+residual peak, not just the freeze-out temperature choice -- 20-30% looks
+like a "sweet spot" for this trained model, while the highest-multiplicity
+bin tested (10-20%) resists the Tfo fix entirely. Each data point here is a
+single event, so some of this spread could still be event-specific rather
+than a true centrality trend; an ensemble check per centrality (as was done
+for 30-40%) would be needed to confirm it's systematic.
+
 ## Testbed: generating training data with a 100 MeV cutoff
 
 If the residual peak is driven by the model's training supervision running
@@ -326,16 +359,23 @@ config** -- while every live-inference config in this investigation used
 0.136 GeV, an independent, unrelated `<FNO>`/`<FNOROOIN>` module default that
 was never cross-checked against the training setup. Raising inference-time
 Tfo to 150 MeV (i.e. actually matching the real training cutoff, not an
-arbitrary higher value) reduces the peak by roughly 30-46% (confirmed at
-ensemble level) without eliminating it -- real but partial support for the
-training-truncation hypothesis. Pushing further to 160 MeV (10 MeV of clean
-margin past the real cutoff) does **not** help any more -- the peak
-plateaus, statistically indistinguishable from the 150 MeV result on the
-same event -- so the residual isn't simply "too close to the training
-edge"; more inference-time margin against the *existing* model won't close
-it further. It's more plausibly driven by individual training events' own
-varying stopping points leaving uneven exposure even at the nominal cutoff,
-or by the surface-geometry mechanism traced earlier. A pilot training-data
+arbitrary higher value) reduces the peak by roughly 30-46% at 30-40%
+centrality (confirmed at ensemble level) without eliminating it -- real but
+partial support for the training-truncation hypothesis. Pushing further to
+160 MeV (10 MeV of clean margin past the real cutoff) does **not** help any
+more -- the peak plateaus, statistically indistinguishable from the 150 MeV
+result on the same event -- so the residual isn't simply "too close to the
+training edge"; more inference-time margin against the *existing* model
+won't close it further. Critically, **the Tfo=150 improvement itself isn't
+centrality-independent**: it's strong at 30-40%, produces the cleanest
+FNO/MUSIC agreement seen anywhere at 20-30% (~3% residual), and makes no
+measurable difference at 10-20%. So centrality is a real variable in
+whatever's driving this, not just the temperature choice. The residual is
+more plausibly driven by individual training events' own varying stopping
+points leaving uneven exposure even at the nominal cutoff, or by the
+surface-geometry mechanism traced earlier -- both of which could plausibly
+also vary with centrality (different typical multiplicities/surface sizes).
+A pilot training-data
 generation run with the cutoff pushed much further, to 100 MeV, completed
 successfully (5 events, 30-40% centrality) as a first step toward testing
 whether an actually retrained model avoids the issue more completely --
