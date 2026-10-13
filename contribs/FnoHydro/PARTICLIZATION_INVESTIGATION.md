@@ -67,8 +67,16 @@ show a real, localized peak at y≈0 for FNO:
 
 ![Final sampled hadron rapidity, FNO vs MUSIC, FNO shows a real central peak](docs/particlization_investigation/final_sampled_rapidity_peak.png)
 
-(Plotted with `example/plot_eta_evolution.py <eta_profile.csv> [out.png] [label]`
-and `example/plot_final_peak.py <spectra_comparison.root>` respectively --
+The pT spectrum (full rapidity range) from the same ensemble shows no
+corresponding shape anomaly -- FNO tracks MUSIC's slope closely, sitting at a
+roughly constant fractional offset across the whole range (the peak is
+strictly a rapidity-direction effect, not a pT-direction one):
+
+![Hadron pT spectrum, 30-40% Au+Au, Tfo=136 MeV, FNO vs MUSIC -- slopes track in parallel](docs/particlization_investigation/pt_spectrum_peak.png)
+
+(Plotted with `example/plot_eta_evolution.py <eta_profile.csv> [out.png] [label]`,
+`example/plot_final_peak.py <spectra_comparison.root>` (rapidity), and
+`example/plot_pt_peak.py <spectra_comparison.root>` (pT) respectively --
 rerun against fresh diagnostic output to regenerate or extend these. The
 MUSIC-side CSV comes from `MusicWrapper.cc`'s `WriteMusicEtaProfileDiagnostic`
 in the main X-SCAPE repo, which writes the same column format so the same
@@ -202,6 +210,12 @@ ensemble sizes; bin errors <1%, so this is statistically solid, not noise):
 
 ![Final sampled hadron rapidity at Tfo=150 MeV, FNO vs MUSIC -- peak reduced but not eliminated](docs/particlization_investigation/final_sampled_rapidity_Tfo150.png)
 
+pT spectrum, same ensemble -- still just a parallel-slope, constant-offset
+comparison, unaffected by the Tfo change (as expected, since Tfo only shifts
+the rapidity-direction shape, not pT):
+
+![Hadron pT spectrum, 30-40% Au+Au, Tfo=150 MeV, FNO vs MUSIC](docs/particlization_investigation/pt_spectrum_Tfo150.png)
+
 **Conclusion**: raising the freeze-out temperature meaningfully *shrinks* the
 central peak -- roughly a 30% relative reduction in the narrow window, ~46%
 in the wider one, confirmed at both single-event and ensemble level -- but
@@ -266,16 +280,23 @@ weakly or not at all to the Tfo fix; the two less-central bins (20-30%,
 seen anywhere in this investigation. All four, at Tfo=150 MeV, side by side:
 
 ![Hadron rapidity, 0-10% centrality, Tfo=150 MeV -- FNO still shows a mild excess at center](docs/particlization_investigation/y_spectrum_0_10_Tfo150.png)
+![Hadron pT spectrum, 0-10% centrality, Tfo=150 MeV](docs/particlization_investigation/pt_spectrum_0_10_Tfo150.png)
 
 ![Hadron rapidity, 10-20% centrality, Tfo=150 MeV -- FNO still shows a mild excess at center](docs/particlization_investigation/y_spectrum_10_20_Tfo150.png)
+![Hadron pT spectrum, 10-20% centrality, Tfo=150 MeV](docs/particlization_investigation/pt_spectrum_10_20_Tfo150.png)
 
 ![Hadron rapidity, 20-30% centrality, Tfo=150 MeV -- FNO tracks MUSIC closely through the whole shared midrapidity region](docs/particlization_investigation/y_spectrum_20_30_Tfo150.png)
+![Hadron pT spectrum, 20-30% centrality, Tfo=150 MeV](docs/particlization_investigation/pt_spectrum_20_30_Tfo150.png)
 
 ![Hadron rapidity, 30-40% centrality, Tfo=150 MeV (15 FNO events / 5 MUSIC events ensemble) -- peak reduced but not eliminated](docs/particlization_investigation/final_sampled_rapidity_Tfo150.png)
+![Hadron pT spectrum, 30-40% centrality, Tfo=150 MeV (same ensemble)](docs/particlization_investigation/pt_spectrum_Tfo150.png)
 
-(The 30-40% plot is the ensemble version from the "Parameter study" section
-above, shown again here for direct side-by-side comparison with the other
-three single-event centralities; 0-10%/10-20%/20-30% are single-event only.)
+(The 30-40% plots are the ensemble versions from the "Parameter study"
+section above, shown again here for direct side-by-side comparison with the
+other three single-event centralities; 0-10%/10-20%/20-30% are single-event
+only. Across all four, pT shape/normalization tracks MUSIC closely
+regardless of centrality or how well the rapidity peak behaves -- the
+residual effect documented here is specifically a rapidity-direction one.)
 
 This means centrality itself is a real variable in whatever's driving the
 residual peak, not just the freeze-out temperature choice. See the next
