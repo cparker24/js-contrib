@@ -12,7 +12,7 @@ Both `fnoHydroLiveTest3D.cc` and `standardHydroLiveTest3D.cc` now wire up
 `iSpectraSamplerWrapper` (iSS) and a `JetScapeWriterFinalStateHadronsAscii`
 writer (flat `index pid pstat E px py pz` per event, alongside the full
 event-record writer) — see commit `698378f`. Matched-seed (424242),
-30-40%-centrality configs: `config/fno_3d_particlization_30_40_{fno,music}.xml`.
+30-40%-centrality configs: `config/particlization_investigation/fno_3d_particlization_30_40_{fno,music}.xml`.
 `contribs/FnoHydro/example/compare_particle_spectra.py` (PyROOT) builds pT and
 rapidity spectra from the two drivers' output; it auto-detects event count per
 file and accepts different `<SoftParticlization><iSS><number_of_repeated_sampling>`
@@ -151,7 +151,7 @@ instrumenting that 4D construction directly — not done here.
 ## Cross-check: does the peak persist at a different centrality?
 
 Repeated the same matched-seed (424242) comparison at 10-20% centrality
-(`config/fno_3d_particlization_10_20_{fno,music}.xml`, single event only, not
+(`config/particlization_investigation/fno_3d_particlization_10_20_{fno,music}.xml`, single event only, not
 yet run as an ensemble). Same signature: within a narrow mid-rapidity window
 the FNO/MUSIC ratio rises from the edges toward center then falls back
 (0.79 / 0.91 / 0.95 / 0.94 / 0.84 / 0.65 bin-by-bin), an ~11% local peak
@@ -187,7 +187,7 @@ and every comparison run before this parameter study had been asking the
 model to extrapolate ~14 MeV past where it actually had training
 supervision, the whole time.
 
-Tested with `config/fno_3d_particlization_30_40_{fno,music}_Tfo150.xml` --
+Tested with `config/particlization_investigation/fno_3d_particlization_30_40_{fno,music}_Tfo150.xml` --
 siblings of the baseline 30-40% configs with `freezeout_temperature` raised
 from 0.136 to 0.150 GeV in both the `<FNO>` block and the embedded priming
 `<MUSIC>` block (FNO config), and the `<MUSIC>` block (MUSIC config).
@@ -238,7 +238,7 @@ peak question.
 **Follow-up: does pushing cleanly past the real cutoff help further?** Since
 150 MeV turned out to be the model's actual training boundary (not a value
 with built-in margin), the Tfo=150 test was still running right at the edge
-of training coverage. Tested 160 MeV (`config/fno_3d_particlization_30_40_{fno,music}_Tfo160.xml`)
+of training coverage. Tested 160 MeV (`config/particlization_investigation/fno_3d_particlization_30_40_{fno,music}_Tfo160.xml`)
 on the same event (seed 424242) to see whether 10 MeV of clean margin inside
 the trained range improves things further:
 
@@ -263,7 +263,7 @@ confirmed at ensemble level the way the 150 MeV result was.)
 
 Ran the same Tfo=150 MeV test (single event, seed 424242) at 0-10%, 10-20%,
 and 20-30% centrality
-(`config/fno_3d_particlization_{0_10,10_20,20_30}_{fno,music}_Tfo150.xml`),
+(`config/particlization_investigation/fno_3d_particlization_{0_10,10_20,20_30}_{fno,music}_Tfo150.xml`),
 to check whether the 30-40% improvement generalizes.
 
 | centrality | peak/edge, narrow (\|y\|<0.45) | peak/edge, wide (\|y\|<0.75) | Tfo=136 narrow, same bin |
@@ -353,7 +353,7 @@ available to do so later if useful.
 iSS applies shear (`include_deltaf_shear`) and bulk (`include_deltaf_bulk`)
 viscous corrections to the Cooper-Frye thermal distribution by default
 (both `1` in `jetscape_main.xml`'s `<SoftParticlization><iSS>` defaults).
-Tested disabling both (`config/fno_3d_particlization_10_20_{fno,music}_Tfo150_noviscous.xml`,
+Tested disabling both (`config/particlization_investigation/fno_3d_particlization_10_20_{fno,music}_Tfo150_noviscous.xml`,
 same seed/centrality/Tfo=150 MeV as the existing 10-20% comparison -- chosen
 because it's the centrality that showed no improvement at all from the Tfo
 fix) to check whether the residual peak is sensitive to these terms.
