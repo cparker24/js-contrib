@@ -10,12 +10,13 @@ Input: two JetScapeWriterFinalStateHadronsAscii files (flat, one header line
 JetScapeWriterFinalStateStream.cc / JetScapeReaderFinalStateHadrons.cc).
 
 Usage:
-  python3 compare_particle_spectra.py <fno.dat> <music.dat> [n_oversamples_fno] [n_oversamples_music] [out.root] [y_min] [y_max]
+  python3 compare_particle_spectra.py <fno.dat> <music.dat> [n_oversamples_fno] [n_oversamples_music] [out.root] [y_min] [y_max] [centrality_label]
 
 n_oversamples_fno/n_oversamples_music are each file's own
 <SoftParticlization><iSS><number_of_repeated_sampling> -- pass different
 values when comparing runs that used different oversampling (e.g. a
-doubled-statistics check on one arm only).
+doubled-statistics check on one arm only). centrality_label (e.g. "10-20")
+is used only in plot titles, default "30-40".
 """
 import sys
 import math
@@ -114,6 +115,7 @@ def main():
     out_root = sys.argv[5] if len(sys.argv) > 5 else "spectra_comparison.root"
     y_min = float(sys.argv[6]) if len(sys.argv) > 6 else -1.0
     y_max = float(sys.argv[7]) if len(sys.argv) > 7 else 1.0
+    centrality_label = sys.argv[8] if len(sys.argv) > 8 else "30-40"
 
     h_pt_fno, h_y_fno = fill_spectra(fno_path, n_oversamples_fno, "FNO", ROOT.kAzure + 1,
                                       y_cut=(y_min, y_max))
@@ -122,8 +124,8 @@ def main():
 
     c_pt = ROOT.TCanvas("c_pt", "pT spectrum", 800, 600)
     c_pt.SetLogy()
-    h_pt_music.SetTitle("Mid-rapidity (%.1f<y<%.1f) hadron p_{T} spectrum, 30-40%% Au+Au;"
-                         "p_{T} [GeV];dN/dp_{T}" % (y_min, y_max))
+    h_pt_music.SetTitle("Mid-rapidity (%.1f<y<%.1f) hadron p_{T} spectrum, %s%% Au+Au;"
+                         "p_{T} [GeV];dN/dp_{T}" % (y_min, y_max, centrality_label))
     h_pt_music.Draw("E1")
     h_pt_fno.Draw("E1 SAME")
     leg_pt = ROOT.TLegend(0.6, 0.7, 0.88, 0.88)
@@ -133,7 +135,7 @@ def main():
     c_pt.SaveAs("pt_spectrum_comparison.png")
 
     c_y = ROOT.TCanvas("c_y", "rapidity spectrum", 800, 600)
-    h_y_music.SetTitle("Hadron rapidity spectrum, 30-40% Au+Au;rapidity y;dN/dy")
+    h_y_music.SetTitle(f"Hadron rapidity spectrum, {centrality_label}% Au+Au;rapidity y;dN/dy")
     h_y_music.SetMinimum(0)
     h_y_music.SetMaximum(1.1 * max(h_y_fno.GetMaximum(), h_y_music.GetMaximum()))
     h_y_music.Draw("E1")
