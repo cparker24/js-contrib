@@ -389,7 +389,9 @@ does not account for it, since removing MUSIC's viscosity to match FNO's
 implicit lack of it doesn't move the peak at all. Only tested at 10-20%
 centrality; not rerun elsewhere given the clean negative result.
 
-## Testbed: generating training data with a 100 MeV cutoff
+## Testbeds: generating training data with extended coverage
+
+### 100 MeV freeze-out cutoff
 
 If the residual peak is driven by the model's training supervision running
 out at 150 MeV, a model trained with real (non-padded) targets further below
@@ -433,6 +435,51 @@ This is a pilot dataset only (5 events, one centrality bin) -- not yet used
 to train anything. Scaling up (more events, other centrality bins) and
 actually retraining a model against this deeper-coverage data is future
 work, not done here.
+
+### Widened eta coverage (|eta| up to 2.0, vs. the current 1.5/1.3125)
+
+Separate hypothesis: even setting the freeze-out-temperature-coverage
+question aside, the current model's narrow trained eta window (after the
+usual etaslice correction, roughly [-1.5, 1.3125]) might itself be
+responsible for some of what's been observed -- a genuinely flat
+ensemble-averaged midrapidity plateau (confirmed for MUSIC, see the 15-event
+ensemble plots above) needs real dynamics on both sides of midrapidity to
+show up as flat; a model trained on a narrow slice has less room on either
+side of y=0 to resolve that flatness, and whatever edge-adjacent behavior
+exists in its trained window sits closer to the middle of what gets sampled.
+Testing whether training with a wider window helps the model reproduce a
+more stable flat plateau is the motivation here; it doesn't test the same
+mechanism as the Tfo=100 run above (temperature-coverage) and could be
+combined with it later.
+
+Config: `/home/cparker/jetscape-docker/xmls/AuAu_30_40_eta2.xml`, cloned
+from the same `AuAu_50ev_30-40.xml` base, only `RootBulkWriter`'s
+`eta_min`/`deta` changed (-1.5/0.1875 -> -2.0/0.2 -- deta intentionally
+widened too so `eta_min=-2.0` divides it evenly, giving an exact symmetric
+span via `RootBulkWriter`'s `neta = 2*int(|eta_min|/deta)+1` formula, rather
+than the slight asymmetry 0.1875 would leave at this width; a model trained
+on this data would need matching `eta_min`/`deta` at inference time, not a
+drop-in replacement against the current one). `freezeout_temperature` left
+at the standard default (0.150 GeV, same as all original training data) --
+this test varies only the eta extraction window. Verified first that
+MUSIC's own native simulation grid (`music_input`'s `Eta_grid_size 20.0`,
+`Grid_size_in_eta 64`, i.e. real dynamics out to |eta|~10) comfortably covers
+the requested range, so nothing here is clamped or extrapolated -- it's
+extracting more of physics MUSIC already computed, not asking for new
+physics outside its native domain. 5 events, matching the Tfo=100 pilot's
+scale.
+
+**Result**: completed successfully (5 events, ~8.5 minutes). Output
+`/home/jetscape-user/rootfiles/AuAu_30_40_eta2.root` (~444 MB), structurally
+as designed: `neta=21` (spanning exactly eta=-2.0 to +2.0 before the usual
+etaslice correction, vs. the current model's 17), `nx=65`/`ny=65` unchanged,
+`nFeatures=5`, `use_vec=1`. Freeze-out times (66-76 tau steps, 6.98-7.98
+fm/c) land in the same range as the original 150 MeV-cutoff dataset, as
+expected -- confirming this run varies the eta window only, not the
+temperature physics.
+
+Also a pilot dataset only (5 events, one centrality bin, 30-40%) -- not yet
+used to train anything.
 
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
@@ -506,11 +553,13 @@ individual training events' own varying stopping points leaving uneven
 exposure even at the nominal cutoff, or by the surface-geometry mechanism
 traced earlier -- both of which could plausibly also vary with centrality
 (different typical multiplicities/surface sizes) without being a spatial
-containment problem. A pilot training-data
-generation run with the cutoff pushed much further, to 100 MeV, completed
-successfully (5 events, 30-40% centrality) as a first step toward testing
-whether an actually retrained model avoids the issue more completely --
-not yet used to train anything. None of this appears to meaningfully distort
+containment problem. Two pilot training-data
+generation runs completed successfully (5 events each, 30-40% centrality,
+not yet used to train anything): one with the freeze-out cutoff pushed much
+further, to 100 MeV, and one with the eta extraction window widened to
+[-2.0, 2.0] (vs. the current model's [-1.5, 1.3125]) -- both first steps
+toward testing whether an actually retrained model avoids the issue more
+completely. None of this appears to meaningfully distort
 physics conclusions drawn from this pipeline (both FNO and MUSIC produce
 smooth, physically reasonable spectra; the peak is a ~8-14% effect on top of
 good agreement in slope and normalization), but a full mechanistic
