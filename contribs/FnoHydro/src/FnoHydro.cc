@@ -499,9 +499,21 @@ void FnoHydro::EvolveHydro() {
     std::vector<double> dsigma_dot_u_per_bin(neta_fno, 0.0);
     std::vector<double> umu3_per_bin(neta_fno, 0.0);
     std::vector<double> tau_per_bin(neta_fno, 0.0);
+    // Transverse containment check: does the surface pile up at the x/y
+    // grid edges (would indicate the fireball is larger than the FNO's
+    // fixed transverse grid and the surface-finder is biased by the
+    // boundary), or does it fall off smoothly well before the edge the way
+    // a correctly-contained fireball should? Separate marginal counts (not
+    // a full 2D histogram) are enough to check this.
+    std::vector<long long> count_per_xbin(nx_fno, 0);
+    std::vector<long long> count_per_ybin(ny_fno, 0);
     int out_of_range = 0;
     for (const auto &cell : surfaceCellVector_) {
       int bin = static_cast<int>(std::round((cell.eta - eta_min_fno) / deta_fno));
+      int xbin = static_cast<int>(std::round((cell.x - x_min_fno) / dx_fno));
+      int ybin = static_cast<int>(std::round((cell.y - y_min_fno) / dy_fno));
+      if (xbin >= 0 && xbin < nx_fno) ++count_per_xbin[xbin];
+      if (ybin >= 0 && ybin < ny_fno) ++count_per_ybin[ybin];
       if (bin < 0 || bin >= neta_fno) { ++out_of_range; continue; }
       ++count_per_bin[bin];
       double dot_u = 0.0;
@@ -531,6 +543,20 @@ void FnoHydro::EvolveHydro() {
     f.close();
     JSINFO << "Wrote surface eta-profile diagnostic (" << out_of_range
            << " surface cells outside the FNO eta grid range).";
+
+    std::ofstream fxy("surface_xy_profile_event" + std::to_string(fno_event_counter - 1) + ".csv");
+    fxy << "x_bin,x_value,n_cells_x,y_bin,y_value,n_cells_y\n";
+    int n_rows = std::max(nx_fno, ny_fno);
+    for (int b = 0; b < n_rows; ++b) {
+      double x_val = x_min_fno + b * dx_fno;
+      double y_val = y_min_fno + b * dy_fno;
+      long long nx_count = (b < nx_fno) ? count_per_xbin[b] : 0;
+      long long ny_count = (b < ny_fno) ? count_per_ybin[b] : 0;
+      fxy << b << "," << x_val << "," << nx_count << "," << b << "," << y_val
+          << "," << ny_count << "\n";
+    }
+    fxy.close();
+    JSINFO << "Wrote surface x/y transverse-containment diagnostic.";
   }
 
   output.reset();

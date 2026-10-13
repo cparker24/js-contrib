@@ -247,36 +247,81 @@ confirmed at ensemble level the way the 150 MeV result was.)
 
 ## Does the Tfo=150 MeV improvement hold across centralities?
 
-Ran the same Tfo=150 MeV test (single event, seed 424242) at 10-20% and
-20-30% centrality (`config/fno_3d_particlization_{10_20,20_30}_{fno,music}_Tfo150.xml`),
+Ran the same Tfo=150 MeV test (single event, seed 424242) at 0-10%, 10-20%,
+and 20-30% centrality
+(`config/fno_3d_particlization_{0_10,10_20,20_30}_{fno,music}_Tfo150.xml`),
 to check whether the 30-40% improvement generalizes.
 
 | centrality | peak/edge, narrow (\|y\|<0.45) | peak/edge, wide (\|y\|<0.75) | Tfo=136 narrow, same bin |
 |---|---|---|---|
+| 0-10% | 12.1% | 31.0% | 14.6% (modest improvement) |
 | 10-20% | 12.8% | 30.2% | 11.1% (no improvement) |
 | 20-30% | **2.7%** | 17.0% | not tested at 136 |
 | 30-40% | 7.6% | 23.0% | 12.4% (clear improvement) |
 
-**Not uniform.** At 30-40% the fix clearly helps; at 10-20% it makes
-essentially no difference (if anything marginally worse, within single-event
-noise); at 20-30% the peak nearly disappears in the narrow window -- visibly
-the cleanest FNO/MUSIC agreement of any centrality or temperature combination
-tested so far:
+**Not uniform, and trending with centrality.** The two most central bins
+(0-10%, 10-20% -- the highest-multiplicity, largest systems tested) respond
+weakly or not at all to the Tfo fix; the two less-central bins (20-30%,
+30-40%) respond clearly, with 20-30% giving the cleanest FNO/MUSIC agreement
+seen anywhere in this investigation:
 
 ![Hadron rapidity, 20-30% centrality, Tfo=150 MeV -- FNO tracks MUSIC closely through the whole shared midrapidity region](docs/particlization_investigation/y_spectrum_20_30_Tfo150.png)
 
 10-20%, by contrast, still shows a visible excess bump at center even at
-150 MeV:
+150 MeV, and 0-10% (not pictured here, see
+`docs/particlization_investigation/y_spectrum_0_10_Tfo150.png`) looks similar:
 
 ![Hadron rapidity, 10-20% centrality, Tfo=150 MeV -- FNO still shows a mild excess at center](docs/particlization_investigation/y_spectrum_10_20_Tfo150.png)
 
 This means centrality itself is a real variable in whatever's driving the
-residual peak, not just the freeze-out temperature choice -- 20-30% looks
-like a "sweet spot" for this trained model, while the highest-multiplicity
-bin tested (10-20%) resists the Tfo fix entirely. Each data point here is a
-single event, so some of this spread could still be event-specific rather
-than a true centrality trend; an ensemble check per centrality (as was done
-for 30-40%) would be needed to confirm it's systematic.
+residual peak, not just the freeze-out temperature choice. See the next
+section for a direct check of one centrality-correlated hypothesis (grid
+containment) that this prompted. Each data point here is a single event, so
+some of this spread could still be event-specific rather than a true
+centrality trend; an ensemble check per centrality (as was done for 30-40%)
+would be needed to confirm it's systematic.
+
+## Is the FNO grid actually containing the fireball? (transverse containment check)
+
+The centrality trend above raises an obvious question: the two centralities
+that responded weakly to the Tfo fix (0-10%, 10-20%) are also the two with
+the largest, most energetic fireballs -- could the FNO's fixed transverse
+grid (x,y in [-10,10) fm) be too small to fully contain them, biasing the
+surface-finder at the hard boundary rather than (or in addition to) the
+freeze-out-temperature effect already traced?
+
+Extended the surface eta-profile diagnostic in `FnoHydro.cc` to also bin
+surface cells by their raw x and y coordinates (marginal counts, not a full
+2D histogram -- `surface_xy_profile_eventN.csv`), and ran it in isolation
+against the 10-20% centrality, Tfo=150 MeV config (the case most likely to
+show truncation if it exists anywhere).
+
+**Result: well contained, not truncated.** Surface-cell counts fall to
+negligible levels (0-30 cells, vs. a ~9,000-16,000 interior plateau) by
+about \|x\|,\|y\| ≈ 8-9.4 fm, comfortably inside the actual ±10 fm grid
+boundary -- a real ~1.5-2 fm margin before the hard edge, not a pile-up at
+it. So for this event, the grid is not clipping real fireball surface area,
+and the surface-finder is not biased by the boundary.
+
+One secondary, unrelated feature showed up in the same data: a pronounced
+asymmetric "shoulder" -- counts rising to roughly 1.5-2x the typical interior
+density right before the falloff, at x≈+5.3 to +5.9 fm and y≈+6.9 to +8.1 fm
+(not mirrored on the negative side). This is most likely just this single
+event's own eccentric, lumpy MCGlauber geometry -- projecting a contained but
+non-circular 3D freeze-out surface onto 1D x/y margins naturally produces a
+shoulder near wherever the surface happens to be "widest" along that axis,
+independent of any boundary effect -- rather than evidence of a problem.
+
+**Conclusion**: grid containment is ruled out as the explanation for why
+0-10%/10-20% respond more weakly to the Tfo fix than 20-30%/30-40% do (at
+least for this one checked event/centrality). The centrality trend is more
+likely driven by the same candidates already identified -- uneven per-event
+training exposure, or the surface-geometry/Cooper-Frye weighting mechanism
+-- both of which could plausibly scale with the larger multiplicities/surface
+sizes of more central collisions, rather than by the model's trained spatial
+domain being too small. Not rerun at other centralities (e.g. 30-40%) for a
+side-by-side comparison; the diagnostic (`surface_xy_profile_eventN.csv`) is
+available to do so later if useful.
 
 ## Testbed: generating training data with a 100 MeV cutoff
 
@@ -335,6 +380,11 @@ work, not done here.
 - `WriteEtaFreezeoutApproachDiagnostic` — per-eta-slice own crossing step/tau
   and the local cooling rate (finite-differenced) in the two steps
   immediately before that crossing.
+- Surface x/y transverse-containment diagnostic (inline in `EvolveHydro()`,
+  alongside the surface eta-profile diagnostic) — marginal surface-cell
+  counts binned by raw x and raw y, written to
+  `surface_xy_profile_eventN.csv`. Checks whether the fireball is contained
+  within the FNO's fixed transverse grid or spilling out at the boundary.
 
 A temporary instrumentation of iSS itself (`FSSW.cpp`, dumping per-cell
 analytic yield for a chosen PDG species) was used to verify the real runtime
@@ -368,14 +418,21 @@ result on the same event -- so the residual isn't simply "too close to the
 training edge"; more inference-time margin against the *existing* model
 won't close it further. Critically, **the Tfo=150 improvement itself isn't
 centrality-independent**: it's strong at 30-40%, produces the cleanest
-FNO/MUSIC agreement seen anywhere at 20-30% (~3% residual), and makes no
-measurable difference at 10-20%. So centrality is a real variable in
-whatever's driving this, not just the temperature choice. The residual is
-more plausibly driven by individual training events' own varying stopping
-points leaving uneven exposure even at the nominal cutoff, or by the
-surface-geometry mechanism traced earlier -- both of which could plausibly
-also vary with centrality (different typical multiplicities/surface sizes).
-A pilot training-data
+FNO/MUSIC agreement seen anywhere at 20-30% (~3% residual), weak at 0-10%,
+and makes no measurable difference at 10-20% -- the two most central
+(highest-multiplicity, largest-fireball) bins respond worst. So centrality
+is a real variable in whatever's driving this, not just the temperature
+choice. Checked and **ruled out** one obvious centrality-correlated
+explanation: the FNO's fixed transverse grid is not too small to contain
+the larger fireballs at these centralities -- a dedicated x/y
+surface-cell-position diagnostic on the 10-20% case showed the surface
+falling to negligible levels a real ~1.5-2 fm margin before the actual grid
+boundary, not piling up at it. The residual is more plausibly driven by
+individual training events' own varying stopping points leaving uneven
+exposure even at the nominal cutoff, or by the surface-geometry mechanism
+traced earlier -- both of which could plausibly also vary with centrality
+(different typical multiplicities/surface sizes) without being a spatial
+containment problem. A pilot training-data
 generation run with the cutoff pushed much further, to 100 MeV, completed
 successfully (5 events, 30-40% centrality) as a first step toward testing
 whether an actually retrained model avoids the issue more completely --
