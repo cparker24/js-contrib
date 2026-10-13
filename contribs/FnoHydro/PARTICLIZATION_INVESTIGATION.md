@@ -348,6 +348,47 @@ domain being too small. Not rerun at other centralities (e.g. 30-40%) for a
 side-by-side comparison; the diagnostic (`surface_xy_profile_eventN.csv`) is
 available to do so later if useful.
 
+## Does disabling iSS's viscous (delta-f) corrections matter?
+
+iSS applies shear (`include_deltaf_shear`) and bulk (`include_deltaf_bulk`)
+viscous corrections to the Cooper-Frye thermal distribution by default
+(both `1` in `jetscape_main.xml`'s `<SoftParticlization><iSS>` defaults).
+Tested disabling both (`config/fno_3d_particlization_10_20_{fno,music}_Tfo150_noviscous.xml`,
+same seed/centrality/Tfo=150 MeV as the existing 10-20% comparison -- chosen
+because it's the centrality that showed no improvement at all from the Tfo
+fix) to check whether the residual peak is sensitive to these terms.
+
+**Structural finding first, before the physics result**: `FnoHydro.cc`
+hardcodes `pi[a][b] = 0` and `bulk_Pi = 0` for every cell it passes to the
+framework (`PassHydroEvolutionHistoryToFramework`'s `fillTailAndStore`) --
+the model has never predicted a shear-stress tensor or bulk pressure at all,
+only (energy density, temperature, velocity). This means **every FNO-vs-MUSIC
+comparison in this entire investigation has implicitly compared ideal
+(no-viscous-correction) Cooper-Frye sampling against MUSIC's genuinely
+viscous sampling** -- a previously undocumented structural asymmetry.
+Confirmed directly: FNO's sampled output was **byte-identical** between the
+`include_deltaf_shear/bulk = 1/1` and `= 0/0` runs (same total count, same
+per-species breakdown) -- toggling the setting is a structural no-op on
+FNO's side, since the correction term is proportional to a tensor that's
+always zero there.
+
+**The physics result, from the one side where the toggle does something**
+(MUSIC):
+
+| window | MUSIC with viscous corrections | MUSIC without |
+|---|---|---|
+| peak/edge, narrow (\|y\|<0.45) | 12.8% | 12.8% |
+
+Disabling MUSIC's viscous corrections shifts its overall normalization up
+slightly (a uniform-ish increase across bins, consistent with how delta-f
+corrections typically suppress yield) but leaves the FNO/MUSIC peak-to-edge
+ratio completely unchanged. **Viscous corrections are ruled out as a
+contributor to the residual central-rapidity peak**: the already-standing
+structural asymmetry (FNO effectively always ideal, MUSIC genuinely viscous)
+does not account for it, since removing MUSIC's viscosity to match FNO's
+implicit lack of it doesn't move the peak at all. Only tested at 10-20%
+centrality; not rerun elsewhere given the clean negative result.
+
 ## Testbed: generating training data with a 100 MeV cutoff
 
 If the residual peak is driven by the model's training supervision running
@@ -452,7 +493,15 @@ explanation: the FNO's fixed transverse grid is not too small to contain
 the larger fireballs at these centralities -- a dedicated x/y
 surface-cell-position diagnostic on the 10-20% case showed the surface
 falling to negligible levels a real ~1.5-2 fm margin before the actual grid
-boundary, not piling up at it. The residual is more plausibly driven by
+boundary, not piling up at it. Also checked and **ruled out** iSS's shear/
+bulk viscous (delta-f) corrections -- though this surfaced a real, previously
+undocumented structural asymmetry: `FnoHydro.cc` hardcodes zero shear stress
+and bulk pressure for every cell (the model has never predicted viscous
+information), so FNO's Cooper-Frye sampling has always implicitly been ideal
+while MUSIC's is genuinely viscous. Despite that asymmetry, explicitly
+disabling MUSIC's viscous corrections too leaves the peak-to-edge ratio
+completely unchanged (12.8% either way at 10-20% centrality) -- not the
+mechanism either. The residual is more plausibly driven by
 individual training events' own varying stopping points leaving uneven
 exposure even at the nominal cutoff, or by the surface-geometry mechanism
 traced earlier -- both of which could plausibly also vary with centrality
