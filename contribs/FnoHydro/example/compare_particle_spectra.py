@@ -24,6 +24,7 @@ import math
 import ROOT
 
 ROOT.gROOT.SetBatch(True)
+ROOT.gStyle.SetOptStat(0)
 
 
 def parse_final_state_hadrons(path):
@@ -67,6 +68,8 @@ def fill_spectra(path, n_oversamples, label, color, y_cut=(-1.0, 1.0)):
                      20, -3.0, 3.0)
     h_pt.Sumw2()
     h_y.Sumw2()
+    h_pt.SetStats(0)
+    h_y.SetStats(0)
 
     n_particles = 0
     n_midrapidity = 0

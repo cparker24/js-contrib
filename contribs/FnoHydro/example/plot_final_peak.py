@@ -11,6 +11,7 @@ import sys
 import ROOT
 
 ROOT.gROOT.SetBatch(True)
+ROOT.gStyle.SetOptStat(0)
 
 
 def main():
@@ -21,6 +22,8 @@ def main():
     f = ROOT.TFile(root_path)
     h_fno = f.Get("hY_FNO")
     h_music = f.Get("hY_MUSIC")
+    h_fno.SetStats(0)
+    h_music.SetStats(0)
 
     c = ROOT.TCanvas("c_final_peak", "final sampled rapidity", 900, 650)
     h_music.SetTitle(f"{title};rapidity y;dN/dy")

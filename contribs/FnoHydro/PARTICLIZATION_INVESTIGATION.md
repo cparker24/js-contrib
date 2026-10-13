@@ -263,15 +263,19 @@ to check whether the 30-40% improvement generalizes.
 (0-10%, 10-20% -- the highest-multiplicity, largest systems tested) respond
 weakly or not at all to the Tfo fix; the two less-central bins (20-30%,
 30-40%) respond clearly, with 20-30% giving the cleanest FNO/MUSIC agreement
-seen anywhere in this investigation:
+seen anywhere in this investigation. All four, at Tfo=150 MeV, side by side:
+
+![Hadron rapidity, 0-10% centrality, Tfo=150 MeV -- FNO still shows a mild excess at center](docs/particlization_investigation/y_spectrum_0_10_Tfo150.png)
+
+![Hadron rapidity, 10-20% centrality, Tfo=150 MeV -- FNO still shows a mild excess at center](docs/particlization_investigation/y_spectrum_10_20_Tfo150.png)
 
 ![Hadron rapidity, 20-30% centrality, Tfo=150 MeV -- FNO tracks MUSIC closely through the whole shared midrapidity region](docs/particlization_investigation/y_spectrum_20_30_Tfo150.png)
 
-10-20%, by contrast, still shows a visible excess bump at center even at
-150 MeV, and 0-10% (not pictured here, see
-`docs/particlization_investigation/y_spectrum_0_10_Tfo150.png`) looks similar:
+![Hadron rapidity, 30-40% centrality, Tfo=150 MeV (15 FNO events / 5 MUSIC events ensemble) -- peak reduced but not eliminated](docs/particlization_investigation/final_sampled_rapidity_Tfo150.png)
 
-![Hadron rapidity, 10-20% centrality, Tfo=150 MeV -- FNO still shows a mild excess at center](docs/particlization_investigation/y_spectrum_10_20_Tfo150.png)
+(The 30-40% plot is the ensemble version from the "Parameter study" section
+above, shown again here for direct side-by-side comparison with the other
+three single-event centralities; 0-10%/10-20%/20-30% are single-event only.)
 
 This means centrality itself is a real variable in whatever's driving the
 residual peak, not just the freeze-out temperature choice. See the next
