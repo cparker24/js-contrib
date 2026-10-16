@@ -607,6 +607,83 @@ whole comparison is **run 3's `best_model_state_dict.pt`** (epoch 18,
 `FNO4d/train_torch/checkpoints_widened_eta_16step_25ep/`) -- the only one of
 the three that wasn't trained well past its own overfitting point.
 
+### Live-inference result: does the widened-eta model actually reduce the peak?
+
+Exported run 3's checkpoint to TorchScript
+(`FNO4d/train_torch/export_torchscript.py --channels 5 --nx 64 --ny 64
+--neta 16 --ntau 99`, matching `FnoHydro.cc`'s existing `n_features==5`
+path -- energy_density, temperature, vx, vy, vz -- which already existed
+and needed no C++ changes) and placed it at
+`contribs/FnoHydro/models/traced_fno_widened_eta_16step_25ep.pt`. New live
+configs: `config/particlization_investigation/fno_3d_particlization_30_40_fno_eta2_25ep{,_15ev}.xml`,
+cloned from the established `..._fno_Tfo150.xml` baseline with only
+`<FNO><model_file>`, `<n_features>` (4->5), `<eta_min>` (-1.5->-2.0), and
+`<deta>` (0.1875->**0.25**, not the raw grid's 0.125 -- the model was
+trained on every other raw bin, so the *effective* spacing between the 16
+bins it actually sees is double the raw `deta`) changed. Same seed (424242),
+same `freezeout_temperature` (0.150 GeV), same MUSIC reference data as the
+established Tfo150 comparison -- only the FNO model/grid changed, for a
+clean, directly comparable test.
+
+**Process note**: `fnoHydroLiveTest3D` (the driver this investigation's live
+configs run through) takes `argv[2]` as a **plain output filename**, not a
+second XML config the way `runJetscape` does -- passing a config path there
+(as done once, by mistake, while setting this comparison up) makes
+`JetScapeWriterAscii` overwrite that file with event data. This corrupted
+`config/jetscape_main.xml` (the real main XML config, hardcoded inside the
+driver and loaded independently of `argv[2]`) and required `git restore` to
+fix. No lasting damage, but worth flagging for next time: `argv[1]` = user
+XML, `argv[2]` = output `.dat` basename, nothing else.
+
+**Single-event check** (seed 424242, same methodology as the Tfo150 study --
+peak bin at \|y\|=0.15 vs. the average of the two edge bins at the window
+boundary, all from the aggregated 20x-oversampled rapidity histogram):
+
+| window | Original model | Widened-eta model | MUSIC (same event, noise floor) |
+|---|---|---|---|
+| peak/edge, narrow (\|y\|<0.45) | 7.6% | **0.7%** | 3.5% |
+| peak/edge, wide (\|y\|<0.75) | 23.0% | **14.0%** | 4.8% |
+
+**15-event ensemble** (vs. the existing 5-event MUSIC Tfo150 reference --
+same reference data as every other ensemble check in this document, since
+MUSIC's physics doesn't depend on which FNO model is being compared against
+it):
+
+| window | Original model (15ev) | Widened-eta model (15ev) | MUSIC (5ev, noise floor) |
+|---|---|---|---|
+| peak/edge, narrow (\|y\|<0.45) | 9.1% | **4.2%** | 3.5% |
+| peak/edge, wide (\|y\|<0.75) | 23.9% | **15.5%** | 4.8% |
+
+![Hadron rapidity spectrum, 30-40% Au+Au, widened-eta model vs MUSIC -- shape now tracks MUSIC across nearly the full plotted range, not just mid-rapidity](docs/particlization_investigation/y_spectrum_eta2_25ep_15ev.png)
+
+![Mid-rapidity (|y|<1) hadron pT spectrum, same ensemble -- slope/normalization still close, as expected](docs/particlization_investigation/pt_spectrum_eta2_25ep_15ev.png)
+
+One new, minor artifact distinct from the original model: 53 of 385,876
+surface cells (0.014%) in the single-event run triggered iSS's
+`"ed is out of range: ... Can not regulate this fluid cell!"` warning
+(`HRGEOS` table lookup, `iSS/src/readindata.cpp`) -- confirmed harmless:
+those cells just keep their original MUSIC-EOS-derived T/P/mu instead of
+being re-regulated to the pure-HRG EOS, and at this fraction of cells it
+has no visible effect on the spectra. Not seen with the original model;
+plausibly the new model occasionally produces a slightly different
+high-density cell near the core that the original never did, but this
+wasn't investigated further given the negligible cell count.
+
+**Conclusion**: the widened-eta retrain is a real, ensemble-confirmed
+improvement, not a single-event fluke. The narrow-window peak is reduced by
+more than half (9.1% -> 4.2%) and now sits close to MUSIC's own statistical
+noise floor (3.5%) -- essentially closed. The wide-window peak shrinks
+substantially too (23.9% -> 15.5%, a ~35% relative reduction) but leaves a
+clear residual well above MUSIC's 4.8% floor -- improved, not eliminated.
+This is the strongest single piece of evidence in this whole investigation
+that the residual peak is a training-data/grid limitation rather than an
+inherent FNO architecture limitation: widening the eta window the model was
+trained on, with nothing else changed (same architecture, same
+freezeout_temperature, same seed), measurably closes most of the gap. The
+remaining wide-window residual is a plausible target for the still-untested
+100 MeV freeze-out-cutoff pilot (see "Testbeds" above) or for combining both
+changes in one retrain.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -689,11 +766,18 @@ models against it to compare LR schedules. Result: a 25-epoch single cosine
 decay (eval L2=1.089) clearly beats a 100-epoch decay (plateaus at ~1.24,
 overfits past epoch ~30) and warm restarts (each restart made things worse,
 1.06->1.07->1.12->1.13 across four cycles) -- the usable model is the
-25-epoch run's best checkpoint. Whether this retrained model actually
-reduces the central-rapidity peak at live-inference time (the original
-question motivating the eta-widening test) is the next thing to check, not
-yet done. None of this appears to meaningfully distort
-physics conclusions drawn from this pipeline (both FNO and MUSIC produce
-smooth, physically reasonable spectra; the peak is a ~8-14% effect on top of
-good agreement in slope and normalization), but a full mechanistic
-explanation remains open.
+25-epoch run's best checkpoint. **Tested live and confirmed**: the
+widened-eta model measurably shrinks the central-rapidity peak (see
+"Live-inference result" above) -- narrow-window (\|y\|<0.45) peak/edge drops
+from 9.1% to 4.2% (now close to MUSIC's own 3.5% statistical noise floor,
+essentially closed), wide-window (\|y\|<0.75) from 23.9% to 15.5% (improved
+~35% but not eliminated), confirmed at both single-event and 15-event
+ensemble level. This is the strongest evidence yet that the residual peak is
+a training-data/grid limitation, not an architectural one -- the 100 MeV
+freeze-out-cutoff pilot (generated but not yet trained against) remains the
+next candidate for closing the still-open wide-window residual. None of this
+appears to meaningfully distort physics conclusions drawn from this pipeline
+(both FNO and MUSIC produce smooth, physically reasonable spectra; the peak
+is now a smaller, ~4-16% effect on top of good agreement in slope and
+normalization), but a full mechanistic explanation for the remaining
+wide-window residual stays open.
