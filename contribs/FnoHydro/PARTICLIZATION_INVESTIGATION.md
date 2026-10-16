@@ -481,6 +481,132 @@ temperature physics.
 Also a pilot dataset only (5 events, one centrality bin, 30-40%) -- not yet
 used to train anything.
 
+## Retraining with the widened eta window: full-scale data and LR-schedule comparison
+
+Scaled the pilot above up to a full training set and actually trained models
+against it, to test the widened-eta hypothesis for real rather than leave it
+as a pilot.
+
+### Full-scale data generation, with a grid-size fix
+
+Generated all four centrality bins (0-10/10-20/20-30/30-40%, 50 events each,
+same scale as the original training set) with the widened eta window. Along
+the way, realized the pilot's grid (`eta_min=-2.0`, `deta=0.2`, `neta=21`)
+wasn't actually usable: the ML side needs spatial grid sizes of the form
+2^n+1, matching `nx=ny=65=64+1` -- `neta=21` doesn't fit that pattern. Fixed
+by changing `deta` to `0.125` (`eta_min` unchanged at `-2.0`), giving
+`neta=33=32+1` via the same `neta=2*int(|eta_min|/deta)+1` formula -- this
+makes the eta axis a power-of-2+1 grid like x/y, with the option to train at
+full resolution (32 increments) or downsampled 2x (16 increments) the same
+way x/y support. Verified with a quick 1-event run before committing to the
+full generation.
+
+Configs: `/home/cparker/jetscape-docker/xmls/AuAu_50ev_<bin>_eta2_n33.xml`
+(cloned from the original `AuAu_50ev_<bin>.xml` files, only `eta_min`/`deta`
+changed). All four bins ran concurrently (12 threads each on a 48-core box),
+completed cleanly in all four cases, verified structurally correct
+(`neta=33, nx=65, ny=65, nFeatures=5, use_vec=1`). One bad event found: 0-10%
+event 34 froze out almost instantly (`tau_freezeout=0.58`, 2 tau steps vs.
+~65-77M data points for every other event). Root cause, confirmed from the
+run log: MUSIC's transverse grid (`<IS><grid_max_x>/<grid_max_y> = 10 fm`, a
+pre-existing, unrelated setting) was hit by that one event's unusually wide
+high-multiplicity central fluctuation --
+`"[Error] Freeze-out cell at the boundary! The grid is too small!"` -- MUSIC
+truncates and moves on rather than re-running on a larger grid. Not a bug
+from the eta-grid change (the earlier `neta=21` run's independent random seed
+simply never rolled this fluctuation); a known stochastic limitation of the
+`grid_max_x/y` setting for central collisions specifically. Not worked around
+by hand -- the training pipeline's existing `min_ntau_freezeout` filter
+(see below) drops it automatically.
+
+### Memory/engineering fixes needed to train on the wider grid
+
+The wider eta axis (33 raw bins vs. the original model's 17) roughly doubles
+per-event memory footprint, which broke three places in the
+`FNO4d/train_torch` and `FNO4d/loc_libs` pipeline that happened to work at
+the old size only by accident:
+
+- `train_torch.py`'s data-loading step did `arr_data['arr'][mask]` then
+  `[:, :, xyslice, ...]` as two sequential indexing operations, briefly
+  holding both the full masked array and the original simultaneously.
+  Fused into one indexing call (`arr_data['arr'][mask, :, xyslice, ...]`);
+  numpy applies the boolean mask and the slices in one pass, so the
+  intermediate never gets materialized. (Verified numerically identical to
+  the two-step version first.)
+- `loc_libs/read_3d_root.py`'s chunked file-reading loop sized its chunks as
+  `nevents // 10` (~19-20 events per chunk for this 199-event combined
+  dataset) -- fine at the old per-event size, but large enough at the new
+  size to OOM-kill the process. Capped at 5 events/chunk regardless of
+  `nevents`.
+- `loc_libs/NormFn3d.py`'s `etau75_3d` normalization allocated a full second
+  copy of the array it was given (`data.copy()`) before writing the
+  normalized result into it. On a clean process this is fast (~10s for a
+  20GB array); run immediately after the large alloc/free cycles from data
+  loading, the *same* allocation took 80+ seconds, with `/usr/bin/time -v`
+  showing the time was almost entirely kernel-side (`sys`, not `user`) --
+  consistent with transparent-hugepage defrag stalling on memory the process
+  had already fragmented, not a CPU-bound computation. No root access to
+  retune `/sys/kernel/mm/transparent_hugepage/defrag`, so fixed in software
+  instead: added an opt-in `in_place` parameter (default `False`, every
+  other caller unaffected) and set it `True` only in `train_torch.py`, where
+  the pre-normalization array is discarded immediately anyway. Cut that step
+  from 82s to 8s in isolation, and from 7+ minutes to 8s in the real
+  pipeline.
+- Separately, `CosineAnnealingLR`'s `T_max` was hardcoded to `30` (a leftover
+  from when every prior campaign used `n_epochs=30`) instead of tracking the
+  configured `n_epochs` -- harmless at 30 epochs, but would have made a
+  100-epoch run's LR schedule re-ascend and do a second partial cycle
+  instead of one smooth decay. Fixed to `T_max=n_epochs`.
+
+### Three training runs, same data, different LR schedules
+
+All three: `hidden_channels=16`, `n_modes=[32,32,16,16]`, `batch_size=1`,
+AdamW `lr=8e-3`, `train_ratio=0.8` (159 train / 40 verify events after
+dropping the one bad event), eta axis downsampled to 16 steps
+(`etaslice=[null,-1,2]` on the 33-point raw grid), `tauslice=[null,100]`.
+Configs: `FNO4d/train_torch/config_widened_eta_16step*.yaml`.
+
+1. **100-epoch single decay** (`CosineAnnealingLR(T_max=100)`,
+   `config_widened_eta_16step.yaml`). Train loss fell smoothly and
+   monotonically the whole way (3.71 -> 0.629). Eval L2 improved until
+   roughly epoch 30 (~1.2), then **plateaued** there for the remaining 70
+   epochs even as train loss kept falling -- a train/eval gap that opened up
+   and never closed. 13,261s (~3h41m) wall-clock, peak 16.3GB CUDA / 25.5GB
+   CPU RAM.
+
+2. **100-epoch warm restarts** (`CosineAnnealingWarmRestarts(T_0=25,
+   T_mult=1)`, `config_widened_eta_16step_warmrestarts.yaml`) -- LR resets
+   to 8e-3 at epochs 25/50/75 instead of decaying once. Motivated by (1)'s
+   plateau: does periodically re-exploring a wider region around the current
+   minimum find a better one? Each cycle's train loss fell further than the
+   last (1.83 -> 0.914 -> 0.757 -> 0.629 at the four cycles' respective
+   troughs), but each cycle's **best eval L2 got worse**, not better: 1.061
+   (cycle 1, ~epoch 20-22) -> 1.07 (cycle 2) -> 1.12 (cycle 3) -> 1.13
+   (cycle 4, final). The restarts themselves added nothing -- they let the
+   model fit the training set harder each cycle without any corresponding
+   generalization gain, the signature of deepening overfitting rather than
+   escaping it. 13,265s wall-clock (same budget as (1), same resource use).
+
+3. **25-epoch single decay, isolated** (`CosineAnnealingLR(T_max=25)`,
+   `config_widened_eta_16step_25ep.yaml`) -- control run to check whether
+   warm-restart cycle 1's good result (1.061) came from the *restart*
+   mechanism or just from a fast, short decay reaching a better point by
+   that epoch than the 100-epoch schedule's much-higher LR had reached by
+   the same epoch. Best eval L2: **1.089** (epoch 18), landing within ~3%
+   of cycle 1's 1.061 -- normal run-to-run noise, not a meaningful
+   difference. 3,578s (~60m) wall-clock.
+
+**Conclusion**: warm restarts added nothing here; every restart after the
+first made the model worse, not better. The real finding is that **the
+100-epoch schedule itself is the problem** -- this model/dataset combination
+overfits well before epoch 100 (eval L2 ~1.09 at epoch 18-22 vs. ~1.24 at the
+100-epoch plateau), and the remaining ~80 epochs of slow annealing just let
+it fit the 159-event training set harder without improving (run 1) or while
+actively hurting (run 2) held-out performance. The usable model from this
+whole comparison is **run 3's `best_model_state_dict.pt`** (epoch 18,
+`FNO4d/train_torch/checkpoints_widened_eta_16step_25ep/`) -- the only one of
+the three that wasn't trained well past its own overfitting point.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -553,13 +679,20 @@ individual training events' own varying stopping points leaving uneven
 exposure even at the nominal cutoff, or by the surface-geometry mechanism
 traced earlier -- both of which could plausibly also vary with centrality
 (different typical multiplicities/surface sizes) without being a spatial
-containment problem. Two pilot training-data
-generation runs completed successfully (5 events each, 30-40% centrality,
-not yet used to train anything): one with the freeze-out cutoff pushed much
-further, to 100 MeV, and one with the eta extraction window widened to
-[-2.0, 2.0] (vs. the current model's [-1.5, 1.3125]) -- both first steps
-toward testing whether an actually retrained model avoids the issue more
-completely. None of this appears to meaningfully distort
+containment problem. A pilot training-data generation run with the
+freeze-out cutoff pushed much further, to 100 MeV, completed successfully
+(5 events, 30-40% centrality) but hasn't been scaled up or trained against
+yet. The eta-widening hypothesis went further: scaled to a full training set
+(all four centrality bins, 50 events each, power-of-2+1 grid -- see
+"Retraining with the widened eta window" above) and actually trained three
+models against it to compare LR schedules. Result: a 25-epoch single cosine
+decay (eval L2=1.089) clearly beats a 100-epoch decay (plateaus at ~1.24,
+overfits past epoch ~30) and warm restarts (each restart made things worse,
+1.06->1.07->1.12->1.13 across four cycles) -- the usable model is the
+25-epoch run's best checkpoint. Whether this retrained model actually
+reduces the central-rapidity peak at live-inference time (the original
+question motivating the eta-widening test) is the next thing to check, not
+yet done. None of this appears to meaningfully distort
 physics conclusions drawn from this pipeline (both FNO and MUSIC produce
 smooth, physically reasonable spectra; the peak is a ~8-14% effect on top of
 good agreement in slope and normalization), but a full mechanistic
