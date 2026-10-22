@@ -823,6 +823,65 @@ to adopt the model as-is; the useful next step is finding a way to combine
 doubled eta resolution with the *original* `tauslice=100` (or close to it),
 not shipping either tau=60 variant.
 
+### Raising Tfo on the 32-step model: fixes the yield deficit too
+
+The yield deficit traced above to the 32-step model's `ntau=59` rollout cap
+suggests an obvious fix that doesn't require more GPU memory: **raise the
+freeze-out temperature** so the real physical freeze-out happens sooner
+(fewer tau steps needed), the same lever used earlier in this document
+(136 -> 150 -> 160 MeV) for a different reason (training-coverage edge
+effects). If the model's rollout is being cut off mid-evolution at Tfo=150
+because real freeze-out needs ~66-85 steps it doesn't have, raising Tfo
+might let genuine freeze-out complete within the available 59 steps instead
+of being truncated.
+
+Tested at Tfo=160 (matching the existing `..._Tfo160.xml` precedent),
+raised in both the `<FNO>` block and the embedded priming `<MUSIC>` block,
+against a freshly generated matching 5-event MUSIC Tfo160 ensemble
+reference (`fno_3d_particlization_30_40_music_Tfo160_multi.xml` -- the
+existing single-event Tfo160 MUSIC reference wasn't enough samples for an
+ensemble check). Config:
+`config/particlization_investigation/fno_3d_particlization_30_40_fno_eta2_32step_25ep_Tfo160{,_15ev}.xml`.
+
+**Confirmed the rollout-truncation diagnosis directly**: the run log at
+Tfo=160 reports `"Squeezed Tensor shape from FNO : 5 64 64 32 60 with
+bulkInfo nTau = 56"` -- the model found genuine freeze-out at step 56,*within*
+its 59-step cap, unlike at Tfo=150 where the rollout was being used to its
+hard limit.
+
+| | Tfo=150 (32-step) | Tfo=160 (32-step) | MUSIC (own Tfo160 noise floor) |
+|---|---|---|---|
+| peak/edge narrow, ensemble | 4.9% | **3.0%** | 5.3% |
+| peak/edge wide, ensemble | 12.8% | **9.8%** | 7.4% |
+| mid-rapidity yield, per draw | 285.0 (-37% vs. tau=100 model) | **409.2** (-7.4% vs. MUSIC directly) | 441.9 |
+
+![Hadron rapidity spectrum, 32-step model at Tfo=160 vs matching MUSIC ensemble -- the closest full-range FNO/MUSIC match in this entire investigation](docs/particlization_investigation/y_spectrum_eta2_32step_Tfo160_15ev.png)
+
+![Mid-rapidity pT spectrum, same ensemble -- slope and normalization both close](docs/particlization_investigation/pt_spectrum_eta2_32step_Tfo160_15ev.png)
+
+**This is the best FNO/MUSIC agreement found anywhere in this
+investigation**, at both single-event and ensemble level: the narrow-window
+ratio is now *below* MUSIC's own statistical noise floor (3.0% vs. 5.3%,
+i.e. indistinguishable from flat), the wide-window residual has shrunk to
+9.8% (vs. MUSIC's own 7.4% floor -- closer than the narrow-window gap
+looked at Tfo=150), and the mid-rapidity yield deficit that made the
+32-step model unusable at Tfo=150 has dropped from -37% to -7.4%. (A
+single-event check along the way showed a narrow-window regression to
+9.4% -- that turned out to be pure event-to-event noise, resolved cleanly
+at the 15-event ensemble level, consistent with every other
+single-event-vs-ensemble gap in this document.)
+
+**This changes the earlier "not adoptable as-is" verdict for the 32-step
+model**: combined with Tfo=160, its main practical flaw (yield deficit) is
+now small enough to be in the same ballpark as ordinary run-to-run variation
+in this pipeline, while it keeps essentially all of the shape improvement
+eta resolution bought. Raising Tfo doesn't fix the model's rollout being
+capped at 59 steps in general -- it works around it for *this* centrality by
+making real freeze-out finish sooner, and would need separate verification
+at other centralities (0-10%/10-20% especially, where the earlier
+Tfo-parameter study found the weakest response to this exact lever) before
+treating it as a general fix rather than a 30-40%-specific one.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -930,13 +989,25 @@ artifact, not an eta-resolution one). Eta resolution 16->32 (at matched
 `tauslice=60`) then improves the wide-window number further, 14.1%->12.8%,
 independent of the tau effect. So eta resolution is pulling real weight here
 -- the 32-step result wasn't just the Tfo-style truncation mechanism in
-disguise -- but neither `tauslice=60` variant is adoptable as-is given the
-~34-37% yield deficit; the useful next step is finding a way to train at
-doubled eta resolution without cutting `tauslice` (more GPU memory,
-activation checkpointing, or `max_rollout_windows>1` chaining), not shipping
-either model now. None of this appears to meaningfully distort physics
-conclusions drawn from this pipeline (both FNO and MUSIC produce smooth,
-physically reasonable spectra; the narrow-window peak is resolved in every
-widened-eta variant tried, and the wide-window residual, while still real,
-keeps shrinking with each change), but a full mechanistic explanation for
-what remains of the wide-window residual stays open.
+disguise. **Then the yield deficit itself got fixed**: since it traced to
+the model's rollout being capped at 59 steps while real freeze-out needed
+more like 66-85, raising `freezeout_temperature` to 160 MeV (the same lever
+used earlier in this document, now reapplied for a new reason) lets genuine
+freeze-out complete within the available steps instead of being cut off --
+confirmed directly in the run log (`"bulkInfo nTau = 56"`, inside the
+59-step cap). Result, at 15-event ensemble level: narrow-window peak/edge
+**3.0%** (now *below* MUSIC's own 5.3% noise floor), wide-window **9.8%**
+(vs. MUSIC's 7.4%), and the yield deficit shrinks from -37% to **-7.4%** --
+the best FNO/MUSIC agreement anywhere in this investigation, at both
+single-event and ensemble level (see "Raising Tfo on the 32-step model"
+above). This isn't a general fix for the rollout-length limitation --
+it works by making this specific centrality's real freeze-out finish sooner,
+and needs separate verification at other centralities before being treated
+as more than a 30-40%-specific result -- but it makes the 32-step model
+practically usable where before it wasn't. None of this appears to
+meaningfully distort physics conclusions drawn from this pipeline (both FNO
+and MUSIC produce smooth, physically reasonable spectra; the narrow-window
+peak is resolved or better in every widened-eta variant tried, and the
+wide-window residual, while not fully eliminated, keeps shrinking with each
+change), but a full mechanistic explanation for what remains of the
+wide-window residual stays open.
