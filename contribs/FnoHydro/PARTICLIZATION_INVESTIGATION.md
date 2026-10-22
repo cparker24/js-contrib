@@ -754,17 +754,74 @@ doubled eta resolution itself helps** -- the eta-resolution and
 tau-rollout-window variables were not cleanly separated in this comparison,
 unlike the clean single-variable 16-step-vs-original comparison above.
 
-**Open follow-up, not done**: train a 16-eta-step model with the *same*
-`tauslice=60` cut (isolating the tau-window effect alone, independent of eta
-resolution) to check whether it alone reproduces the 32-step model's
-wide-window number and yield deficit. If it does, the 32-step eta change
-added nothing beyond what shortening the rollout already bought on its own
-(mirroring the Tfo=150 result almost exactly) -- if it doesn't, the doubled
-eta resolution is pulling real weight independent of the tau-window
-confound. Either way, the 32-step model's ~26% yield deficit makes it
-unsuitable to adopt as-is without further fixing the rollout-length
-limitation (longer trained rollout, `max_rollout_windows>1` multi-window
-chaining, or a GPU/memory path that doesn't force the trade-off).
+### Isolating the confound: a tauslice=60-only control at 16 eta steps
+
+Follow-up control run: same 16-eta-step model as the original, validated
+"Live-inference result" above, but with `tauslice` cut 100->60 to exactly
+match what the 32-step run was forced into -- isolating the tau-window
+variable from the eta-resolution variable. Config:
+`FNO4d/train_torch/config_widened_eta_16step_tau60_25ep.yaml`.
+
+**Training**: eval L2 = 0.4902 at the final epoch (25), essentially
+identical to the 32-step model's 0.4867 (0.7% apart) -- confirming the
+earlier guess that the 1.089 -> ~0.49 eval-L2 jump when going from the
+original to either new run is driven almost entirely by the shorter
+prediction horizon (predicting 59 steps is an inherently easier learning
+problem than 99), independent of eta resolution. 2414s (~40m) wall-clock,
+peak 11.10GB CUDA -- comfortably below the 32-step run's 18.73GB, confirming
+eta resolution (not tau length) was the dominant memory driver.
+
+**Live-inference result** (same model/architecture otherwise, same seed,
+same live-config template, `--ntau 59` export, `eta_min=-2.0`/`deta=0.25`
+unchanged from the original 16-step model):
+
+| | 16-step / tau=100 (original) | 16-step / tau=60 (control) | 32-step / tau=60 |
+|---|---|---|---|
+| peak/edge narrow, ensemble | 4.2% | 3.8% | 4.9% |
+| peak/edge wide, ensemble | 15.5% | 14.1% | 12.8% |
+| mid-rapidity yield, per draw (\|y\|<1) | 453.6 | 299.3 (-34%) | 285.0 (-37%) |
+
+![Hadron rapidity spectrum, 16-step/tauslice=60 control vs MUSIC -- same yield-undershoot pattern as the 32-step model, with eta resolution unchanged](docs/particlization_investigation/y_spectrum_eta2_16step_tau60_25ep_15ev.png)
+
+![Mid-rapidity pT spectrum, same control run](docs/particlization_investigation/pt_spectrum_eta2_16step_tau60_25ep_15ev.png)
+
+**This cleanly separates the two effects, and both turn out to be real,
+contributing roughly equally to the wide-window improvement -- but the
+yield deficit is attributable almost entirely to the tau cut, not eta
+resolution:**
+
+- **Yield**: the tau=60 control's yield deficit (-34%) is essentially the
+  same as the 32-step model's (-37%) -- both well below the tau=100
+  original, and close to each other despite a 2x difference in eta
+  resolution between them. The rapidity-spectrum plot shows the identical
+  undershoot shape as the 32-step model. **The yield problem is a tau-window
+  artifact, not an eta-resolution artifact** -- restoring `tauslice` toward
+  100 (not reducing eta resolution) is the fix, which requires solving the
+  GPU-memory constraint that forced this trade-off in the first place
+  (longer trained rollout at full eta resolution needs either more GPU
+  memory, activation checkpointing support this FNO implementation doesn't
+  have, or `max_rollout_windows>1` multi-window chaining).
+- **Wide-window shape**: contrary to the earlier worry that eta resolution
+  "added nothing," both variables contribute independently and roughly
+  comparably here: tau=100->60 alone improves 15.5%->14.1% (~9% relative),
+  and eta=16->32 on top of that (at matched tau=60) improves it further,
+  14.1%->12.8% (~9% relative again) -- additive, not redundant. (The earlier
+  single-event-only numbers for this same control, 5.6%/16.7%, looked like
+  tau=60 alone made things *worse* -- that was event-to-event noise at
+  n=1; the 15-event ensemble is the number to trust, consistent with how
+  every other single-event-vs-ensemble comparison in this document has
+  gone.)
+- **Narrow window**: already effectively resolved in all three variants
+  (3.8-4.9%, all close to MUSIC's 3.5% noise floor) -- this was fixed by the
+  original eta-widening retrain and neither further change moves it
+  meaningfully.
+
+**Bottom line**: eta resolution is pulling real, independent weight on the
+wide-window residual -- the 32-step result wasn't just the tau-truncation
+mechanism in disguise. But its yield deficit isn't an acceptable trade-off
+to adopt the model as-is; the useful next step is finding a way to combine
+doubled eta resolution with the *original* `tauslice=100` (or close to it),
+not shipping either tau=60 variant.
 
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
@@ -861,18 +918,25 @@ next candidate for closing the still-open wide-window residual. **Follow-up:
 doubling eta resolution again (32 steps) was tried** (see "Doubling eta
 resolution further" above) and did shrink the wide-window number further
 (15.5% -> 12.8%), but GPU memory forced `tauslice` down from 100 to 60 at
-the same time, and the result looks driven mostly or entirely by that
-shortened rollout window rather than by eta resolution itself: surface-cell
-count and mid-rapidity yield both dropped ~25-26% relative to the 16-step
-model, matching the model's hard `ntau=59` rollout cap against this
-centrality's real ~66-85-tau-step freeze-out times -- the same
-early-truncation mechanism the Tfo=136-vs-150 study already identified, not
-new evidence specifically about eta resolution. The 32-step model is not
-adopted as-is (real yield deficit); isolating a `tauslice=60`-only 16-step
-control is the clean next step to settle whether eta resolution adds
-anything beyond what the shorter rollout alone buys. None of this appears to
-meaningfully distort physics conclusions drawn from this pipeline (both FNO
-and MUSIC produce smooth, physically reasonable spectra; the peak is now a
-smaller, ~4-16% effect on top of good agreement in slope and normalization,
-modulo the 32-step model's separate yield-normalization issue), but a full
-mechanistic explanation for the remaining wide-window residual stays open.
+the same time, confounding eta resolution with tau-window length. **Isolated
+with a dedicated control** (16-eta-step model retrained with the same
+`tauslice=60` cut, nothing else changed -- see "Isolating the confound"
+above): both variables turned out to be real and roughly additive.
+`tauslice=100->60` alone improves the wide-window number 15.5%->14.1%
+(~9% relative) and causes essentially all of the yield deficit (-34% at
+`tauslice=60`/16-step vs. -37% at `tauslice=60`/32-step -- nearly identical
+regardless of eta resolution, confirming the deficit is a tau-window
+artifact, not an eta-resolution one). Eta resolution 16->32 (at matched
+`tauslice=60`) then improves the wide-window number further, 14.1%->12.8%,
+independent of the tau effect. So eta resolution is pulling real weight here
+-- the 32-step result wasn't just the Tfo-style truncation mechanism in
+disguise -- but neither `tauslice=60` variant is adoptable as-is given the
+~34-37% yield deficit; the useful next step is finding a way to train at
+doubled eta resolution without cutting `tauslice` (more GPU memory,
+activation checkpointing, or `max_rollout_windows>1` chaining), not shipping
+either model now. None of this appears to meaningfully distort physics
+conclusions drawn from this pipeline (both FNO and MUSIC produce smooth,
+physically reasonable spectra; the narrow-window peak is resolved in every
+widened-eta variant tried, and the wide-window residual, while still real,
+keeps shrinking with each change), but a full mechanistic explanation for
+what remains of the wide-window residual stays open.
