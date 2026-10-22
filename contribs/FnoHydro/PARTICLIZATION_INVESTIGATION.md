@@ -684,6 +684,88 @@ remaining wide-window residual is a plausible target for the still-untested
 100 MeV freeze-out-cutoff pilot (see "Testbeds" above) or for combining both
 changes in one retrain.
 
+### Doubling eta resolution further (32 steps): real improvement, but confounded
+
+Follow-up: does doubling eta resolution again (32 steps instead of 16, same
+already-generated `neta=33` raw data, just `etaslice=[null,-1]` instead of
+`[null,-1,2]`) close the remaining wide-window residual further?
+
+**GPU memory forced a second variable to change.** Doubling `neta` alone
+OOM'd the 24GB RTX 3090 during real backward+optimizer-step training (empirically
+checked: `tauslice=100` and even `70` both failed once AdamW's persistent
+optimizer state was accounted for; `60` was the largest value that survived
+3 consecutive full training steps, ~20.4GB peak). This FNO implementation has
+no activation-checkpointing support to trade compute for memory (checked
+`fno_block.py`/`fno.py` -- none), so `tauslice` was cut 100->60 to fit. eta
+Fourier modes were kept at 16 (not doubled to 32) for the same reason --
+doubling modes roughly doubled total params (151M -> 302M) and OOM'd harder;
+16 modes on a 32-point eta axis also happens to match the modes=axis/2
+convention already used for x/y. Config:
+`FNO4d/train_torch/config_widened_eta_32step_25ep.yaml`. Otherwise identical
+to the 16-step run: same 4 files, same 25-epoch single `CosineAnnealingLR`
+decay, same `lr`/`weight_decay`.
+
+**Training result: no overfitting at all within 25 epochs**, unlike every
+prior run on this dataset. Eval L2 fell monotonically the entire way (0.63 ->
+0.49) with the *final* epoch (24) the best (0.4867) -- less than half the
+16-step model's best-ever value (1.089), and still improving when training
+stopped. 4151s (~69m) wall-clock, peak 18.73GB CUDA / 30.33GB CPU RAM (the
+23.65GB CUDA figure seen transiently via `nvidia-smi` during startup was a
+one-time spike, not sustained).
+
+**Live-inference result** (exported via the same `export_torchscript.py`
+path, `--neta 32 --ntau 59`; live config `deta=0.125`, the *raw* grid spacing,
+since this run keeps every bin rather than downsampling):
+
+| window | 16-step model | 32-step model | MUSIC (noise floor) |
+|---|---|---|---|
+| peak/edge, narrow, single-event | 0.7% | -2.0% | 3.5% |
+| peak/edge, wide, single-event | 14.0% | 11.4% | 4.8% |
+| peak/edge, narrow, 15-event ensemble | 4.2% | 4.9% | 3.5% |
+| peak/edge, wide, 15-event ensemble | 15.5% | **12.8%** | 4.8% |
+
+![Hadron rapidity spectrum, 32-step model vs MUSIC -- shape still tracks reasonably at midrapidity, but overall yield sits well below MUSIC, unlike the 16-step model's comparison](docs/particlization_investigation/y_spectrum_eta2_32step_25ep_15ev.png)
+
+![Mid-rapidity pT spectrum, same ensemble -- slope still close to MUSIC, consistent with a pure yield deficit rather than a temperature/slope problem](docs/particlization_investigation/pt_spectrum_eta2_32step_25ep_15ev.png)
+
+The wide-window peak/edge number did improve further (15.5% -> 12.8%), and
+the narrow window stayed close to MUSIC's noise floor either way (noisy
+difference of 4.2% vs 4.9%, not clearly significant at these bin counts).
+**But this isn't a clean confirmation that more eta resolution is the
+mechanism.** The rapidity-spectrum plot shows the 32-step model's total
+yield sitting well below MUSIC's at essentially every rapidity, not just
+narrower -- mid-rapidity multiplicity per draw dropped to 285.0 vs MUSIC's
+386.6 (~26% low), and the single-event surface-cell count dropped to 288,409
+vs. the 16-step model's 385,876 on a comparable event (~25% fewer cells) --
+both numbers agree with each other and point at the same cause: the model's
+rollout is hard-capped at `ntau=59` steps
+(confirmed in the run log: `"FNO rollout: up to 1 window(s) of ntau=59 each
+(stops early once the hottest cell drops to/below freezeout_temperature)"`),
+and 30-40% centrality's real freeze-out surfaces in this investigation have
+consistently needed more like 66-85 tau steps (see the training-data
+generation sections above) to fully develop. The model can't represent
+evolution past step 59 at all -- it isn't failing to learn that regime, it
+was never given the *option* to extend into it, the same way the original
+Tfo=136-vs-150 test showed that cutting evolution off earlier (closer to,
+not past, a model's actual trained coverage) suppresses the peak. **The
+wide-window improvement here is plausibly the same truncation mechanism
+already characterized in the Tfo parameter study, not new evidence that
+doubled eta resolution itself helps** -- the eta-resolution and
+tau-rollout-window variables were not cleanly separated in this comparison,
+unlike the clean single-variable 16-step-vs-original comparison above.
+
+**Open follow-up, not done**: train a 16-eta-step model with the *same*
+`tauslice=60` cut (isolating the tau-window effect alone, independent of eta
+resolution) to check whether it alone reproduces the 32-step model's
+wide-window number and yield deficit. If it does, the 32-step eta change
+added nothing beyond what shortening the rollout already bought on its own
+(mirroring the Tfo=150 result almost exactly) -- if it doesn't, the doubled
+eta resolution is pulling real weight independent of the tau-window
+confound. Either way, the 32-step model's ~26% yield deficit makes it
+unsuitable to adopt as-is without further fixing the rollout-length
+limitation (longer trained rollout, `max_rollout_windows>1` multi-window
+chaining, or a GPU/memory path that doesn't force the trade-off).
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -775,9 +857,22 @@ essentially closed), wide-window (\|y\|<0.75) from 23.9% to 15.5% (improved
 ensemble level. This is the strongest evidence yet that the residual peak is
 a training-data/grid limitation, not an architectural one -- the 100 MeV
 freeze-out-cutoff pilot (generated but not yet trained against) remains the
-next candidate for closing the still-open wide-window residual. None of this
-appears to meaningfully distort physics conclusions drawn from this pipeline
-(both FNO and MUSIC produce smooth, physically reasonable spectra; the peak
-is now a smaller, ~4-16% effect on top of good agreement in slope and
-normalization), but a full mechanistic explanation for the remaining
-wide-window residual stays open.
+next candidate for closing the still-open wide-window residual. **Follow-up:
+doubling eta resolution again (32 steps) was tried** (see "Doubling eta
+resolution further" above) and did shrink the wide-window number further
+(15.5% -> 12.8%), but GPU memory forced `tauslice` down from 100 to 60 at
+the same time, and the result looks driven mostly or entirely by that
+shortened rollout window rather than by eta resolution itself: surface-cell
+count and mid-rapidity yield both dropped ~25-26% relative to the 16-step
+model, matching the model's hard `ntau=59` rollout cap against this
+centrality's real ~66-85-tau-step freeze-out times -- the same
+early-truncation mechanism the Tfo=136-vs-150 study already identified, not
+new evidence specifically about eta resolution. The 32-step model is not
+adopted as-is (real yield deficit); isolating a `tauslice=60`-only 16-step
+control is the clean next step to settle whether eta resolution adds
+anything beyond what the shorter rollout alone buys. None of this appears to
+meaningfully distort physics conclusions drawn from this pipeline (both FNO
+and MUSIC produce smooth, physically reasonable spectra; the peak is now a
+smaller, ~4-16% effect on top of good agreement in slope and normalization,
+modulo the 32-step model's separate yield-normalization issue), but a full
+mechanistic explanation for the remaining wide-window residual stays open.
