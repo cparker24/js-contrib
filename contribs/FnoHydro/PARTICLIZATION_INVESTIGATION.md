@@ -982,6 +982,71 @@ already exists from any single MUSIC reference run) rather than assuming
 (a genuinely longer trained rollout, avoiding needing centrality-specific
 Tfo tuning at all) remains open and untried.
 
+### Can multi-window rollout chaining reach the ORIGINAL Tfo instead? No, not as currently implemented
+
+The elevated-Tfo prescription above is a workaround for a fixed, too-short
+rollout. `FnoHydro.cc` already has a mechanism aimed at the real fix:
+`<max_rollout_windows>` (default 1) runs the model multiple times,
+autoregressively feeding each window's last predicted timestep back in as
+the next window's initial condition, extending the total reachable tau
+without retraining. A code comment in `BuildNextWindowIC` describes a past
+normalization bug in this path (denormalizing the fed-back state in place,
+"very likely the real driver of the 'rollout reheating' behavior observed
+with `max_rollout_windows > 1`") that reads as already fixed in the current
+code -- worth testing directly rather than taking on faith, especially since
+it would let 10-20% (and everywhere else) run at the *original* training
+cutoff (0.150 GeV) instead of a per-centrality inflated value.
+
+Tested at 10-20% centrality (the hardest case), same model, same seed,
+`freezeout_temperature` restored to 0.150 GeV, `max_rollout_windows` raised
+to 3 (up to 178 steps, tau up to ~18 fm -- generous headroom; the loop still
+breaks as soon as a window's hottest cell crosses Tfo). Config:
+`fno_3d_particlization_10_20_fno_eta2_32step_25ep_multiwindow{3,2}_Tfo150.xml`.
+
+**The reheating bug is still present.** Window 0's own diagnostic log line
+reads `T = 0.178 GeV` (matching the single-window Tfo=190 estimate exactly,
+as expected) -- but window 1 reports `T = 0.206 GeV`, *higher* than window
+0's ending temperature, despite the physical system continuing to expand
+and cool. Feeding the model's own last predicted step back in as a fresh,
+temporally-flat initial condition is out-of-distribution for what it was
+trained on (every real training sample has actual temporal structure from
+`tau_min`, not a single frame repeated across the whole tau axis) -- a
+plausible reason the fix in `BuildNextWindowIC` doesn't fully solve it, even
+though it does fix the specific denormalization bug it targeted.
+
+Consequences, observed directly:
+
+- **3 windows**: crashes. By the third window the output degenerates to
+  `ed = 0` across many cells, producing NaN downstream in iSS's EOS lookup
+  (`"N_eq is nan, theta = 1, ... T = 0GeV"`) and a non-zero exit code.
+- **2 windows**: completes, but never finds a crossing below Tfo=150 at all
+  -- `bulkInfo nTau = 119`, the *full* available length, meaning the
+  reheated temperature never fully recovers back down to 150 MeV within the
+  second window's 59 steps either. The output it does produce is
+  substantially corrupted: 62,100 of 1,468,761 surface cells (4.2%, vs.
+  ~0.01-0.04% in every single-window run so far) trigger the
+  `"ed is out of range"` EOS-regulation warning, with energy densities up to
+  3.4 GeV/fm^3 -- well beyond anything seen in a working single-window run
+  -- and the surface-cell count itself is anomalously large (2-6x every
+  other 10-20% result), consistent with the reheating artifact creating a
+  spurious, physically-meaningless extended "boiling" fireball rather than
+  genuine additional evolution.
+
+**Conclusion: no, not with the current implementation.** The documented fix
+to `BuildNextWindowIC` addresses one specific bug in the feedback path, but
+multi-window chaining still produces unreliable, partly-corrupted physics
+for this model, most plausibly because repeating a single predicted frame
+across the whole next-window tau axis is itself out-of-distribution input,
+independent of the normalization question the existing fix targeted. The
+per-centrality elevated-Tfo workaround (validated above at both 30-40% and
+10-20%) remains the only currently-working way to get usable results from
+this model; reaching the original training-data Tfo via a longer *effective*
+rollout would need either genuinely retraining with more trained tau steps,
+or further debugging of the autoregressive chaining path (e.g. training the
+model to accept a flat/repeated-frame initial condition, or finding a
+different window-boundary handoff than repeating the last frame) before it
+can be trusted.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
