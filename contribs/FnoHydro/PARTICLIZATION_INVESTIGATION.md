@@ -1047,6 +1047,87 @@ model to accept a flat/repeated-frame initial condition, or finding a
 different window-boundary handoff than repeating the last frame) before it
 can be trusted.
 
+### Memory estimate: what would it take to train central events to genuine freeze-out at 32 eta steps?
+
+Given multi-window chaining doesn't currently work, the only real fix for
+the rollout-length limitation is training with a longer `tauslice` outright
+-- which is exactly what GPU memory blocked at 32 eta steps (see "Doubling
+eta resolution further" above: `tauslice=100` and even `70` both OOM'd a
+24GB RTX 3090; `60` was the largest that fit). Before spending GPU-hours
+finding that boundary experimentally again at some new `tauslice`, estimate
+it from data already in hand.
+
+**How much tau coverage is actually needed.** The real constraint is the
+*most central* bin, not the average case: pulling the raw per-event
+`ntau_freezeout` array out of the 32-step model's own training run
+(`train_widened_eta_32step_25ep.log`, 200 events = 50 per centrality bin, in
+the order the four training files were listed) gives the real spread at the
+original training cutoff (Tfo=150 GeV, `dtau=0.1`, `tau_min=0.44`):
+
+| centrality | max `ntau_freezeout` | mean |
+|---|---|---|
+| 0-10% | **111** | 98.4 |
+| 10-20% | 99 | 89.7 |
+| 20-30% | 92 | 79.9 |
+| 30-40% | 80 | 70.2 |
+
+0-10% is the binding constraint: even the *validated, working* 16-step
+model's `tauslice=100` doesn't comfortably cover its longest-lived events
+(max 111 > 100) -- a detail that didn't matter for any test run in this
+document since none of them used 0-10% centrality with the original Tfo,
+but would matter for a model meant to genuinely reach freeze-out there
+without any Tfo workaround.
+
+**Memory-scaling model.** Three real training runs at 32x32 spatial modes,
+`hidden_channels=16`, give three (eta, tau, peak-CUDA-GB) data points:
+
+| neta | tauslice | peak CUDA |
+|---|---|---|
+| 16 | 100 | 16.27 GB |
+| 16 | 60 | 11.10 GB |
+| 32 | 60 | 18.73 GB |
+
+A simple linear fit, `peak_CUDA_GB ≈ 0.00797 * (neta * tauslice) + 3.47`,
+reproduces all three to within 0.1 GB (least-squares fit, `numpy.linalg.lstsq`)
+-- `neta * tauslice` is a reasonable proxy since it tracks the one thing that
+actually varied across all three runs (the main activation tensor's
+element count along the two axes that changed; `nx=ny=64` and
+`hidden_channels=16` were fixed throughout).
+
+| target | neta | tauslice | estimated peak CUDA | fits in 24GB? |
+|---|---|---|---|---|
+| current 32-step model | 32 | 60 | 18.8 GB (actual: 18.73) | yes (tight) |
+| restore original tau budget | 32 | 100 | **29.0 GB** | no |
+| cover 0-10% exactly, no margin | 32 | 111 | **31.8 GB** | no |
+| 0-10% + ~8% margin | 32 | 120 | **34.1 GB** | no |
+| 0-10% + ~17% margin | 32 | 130 | **36.6 GB** | no |
+| 0-10% + ~26% margin | 32 | 140 | **39.2 GB** | no |
+
+**None of these fit the 24GB card this investigation has been run on.**
+Even the zero-margin estimate (32 GB) is ~33% over budget; a comfortable
+margin (similar in spirit to the ~5-10% margin the working Tfo-workaround
+runs landed on) points to needing roughly **35-40 GB of GPU memory** to
+train a 32-eta-step model that reaches genuine freeze-out for every
+centrality at the original Tfo, without any rollout-length workaround. That
+puts it in range of a single 40GB A100 (tight, ~31-34 GB targets) or
+comfortably within an 80GB A100/H100 (every target above, with room for
+`hidden_channels` or batch-size headroom besides).
+
+**Caveat on the estimate itself**: every target above extrapolates past the
+tested range -- the largest tested point is `neta*tauslice=1920`
+(`neta=32, tauslice=60`), while `neta=32, tauslice=100` is `3200` (1.7x
+beyond it) and `tauslice=140` is `4480` (2.3x beyond). The fit is linear and
+clean across the (narrow) tested range, but memory allocators and
+FFT-based spectral convolutions don't always scale perfectly linearly once
+sizes grow enough to cross into different padding/algorithm regimes --
+treat this as a planning estimate to size the next GPU request, not a
+guarantee, and re-verify empirically (the same cheap forward+backward+
+optimizer-step smoke test used throughout this document, before committing
+to a multi-hour training run) once that hardware is available. `hidden_channels`
+reduction (currently 16) is an untested additional lever if even the
+smaller targets don't fit in practice -- it would reduce both model capacity
+and memory, a different trade-off than anything explored so far.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
