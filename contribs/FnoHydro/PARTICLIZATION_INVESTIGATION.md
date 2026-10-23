@@ -882,6 +882,58 @@ at other centralities (0-10%/10-20% especially, where the earlier
 Tfo-parameter study found the weakest response to this exact lever) before
 treating it as a general fix rather than a 30-40%-specific one.
 
+### Does the Tfo=160 fix generalize? Tested at 10-20% -- no
+
+Deliberately tested the hardest case: 10-20% centrality, the bin where the
+original Tfo=136->150 change was already known not to help (actually got
+*worse*, 11.1% -> 12.8% narrow-window, in the earlier "Does the Tfo=150 MeV
+improvement hold across centralities?" study) -- not a favorable bin picked
+to confirm the result, the specific one most likely to break it. Same
+model (`traced_fno_widened_eta_32step_25ep.pt`), same Tfo=160, same seed
+424242, single event, only `<cenMin>/<cenMax>` and
+`<centrality-low>/<centrality-high>` changed. Config:
+`config/particlization_investigation/fno_3d_particlization_10_20_fno_eta2_32step_25ep_Tfo160.xml`
+/ `fno_3d_particlization_10_20_music_Tfo160.xml` (new MUSIC Tfo160
+reference at this centrality, generated fresh -- none existed yet).
+
+**It doesn't generalize.** The rollout-truncation diagnostic that showed
+genuine freeze-out at 30-40% (`"bulkInfo nTau = 56"`, inside the 59-step
+cap) instead shows **`"bulkInfo nTau = 60"`** here -- the full tensor, i.e.
+the rollout is *still* being cut off before real freeze-out completes, even
+at the raised temperature. 10-20% is a more central, higher-multiplicity,
+longer-lived system than 30-40%, so it needs more evolution time to reach
+any given freeze-out temperature -- Tfo=160 wasn't enough margin to bring
+that need back under 59 steps the way it was at 30-40%.
+
+| | 10-20%, Tfo=160 | 30-40%, Tfo=160 (for comparison) |
+|---|---|---|
+| peak/edge narrow | 2.2% | 3.0% |
+| peak/edge wide | 19.2% | 9.8% |
+| surface cells | 365,668 (FNO) vs. 696,175 (MUSIC) | comparable order of magnitude |
+| mid-rapidity yield, per draw | 531.0 (FNO) vs. 1258.2 (MUSIC) -- **-57.8%** | 409.2 vs. 441.9 -- -7.4% |
+
+![Hadron rapidity spectrum, 10-20% centrality, 32-step model at Tfo=160 vs MUSIC -- FNO tracks roughly half of MUSIC's yield at every rapidity, a severe deficit despite a reasonable narrow-window shape](docs/particlization_investigation/y_spectrum_10_20_eta2_32step_Tfo160_single.png)
+
+The narrow-window shape ratio (2.2%) is actually fine on its own -- the
+problem here is pure normalization, not peakedness: the rapidity plot shows
+FNO tracking roughly *half* of MUSIC's yield at essentially every rapidity
+point, a uniform deficit rather than a shape distortion. That's consistent
+with the rollout simply running out before the fireball has finished
+freezing out, missing a large fraction of the true surface outright, rather
+than mis-shaping what it does find.
+
+**Conclusion: the Tfo=160 fix is centrality-specific, not general**,
+mirroring the original Tfo=136->150 study's own finding that 10-20%/0-10%
+respond weakly or not at all to this lever. A higher Tfo would plausibly
+need to go further than 160 at 10-20% to bring real freeze-out inside the
+59-step cap (not tested) -- or, as already concluded above, the real fix is
+giving the model a longer trained rollout (more GPU memory, activation
+checkpointing, or multi-window chaining) rather than relying on Tfo to
+shrink the *required* evolution time to fit inside a fixed, too-short one.
+The 32-step-model-at-Tfo160 result should be considered validated at
+30-40% centrality only until/unless a working fix is found for the more
+central bins.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -1000,14 +1052,22 @@ confirmed directly in the run log (`"bulkInfo nTau = 56"`, inside the
 (vs. MUSIC's 7.4%), and the yield deficit shrinks from -37% to **-7.4%** --
 the best FNO/MUSIC agreement anywhere in this investigation, at both
 single-event and ensemble level (see "Raising Tfo on the 32-step model"
-above). This isn't a general fix for the rollout-length limitation --
-it works by making this specific centrality's real freeze-out finish sooner,
-and needs separate verification at other centralities before being treated
-as more than a 30-40%-specific result -- but it makes the 32-step model
-practically usable where before it wasn't. None of this appears to
-meaningfully distort physics conclusions drawn from this pipeline (both FNO
-and MUSIC produce smooth, physically reasonable spectra; the narrow-window
-peak is resolved or better in every widened-eta variant tried, and the
-wide-window residual, while not fully eliminated, keeps shrinking with each
-change), but a full mechanistic explanation for what remains of the
+above). **Tested whether this generalizes, at 10-20% centrality (the
+hardest case -- deliberately chosen, the bin already known not to respond to
+Tfo changes): it doesn't.** The rollout-truncation diagnostic that showed
+genuine freeze-out at 30-40% instead shows the full, uncompleted 60-slice
+tensor at 10-20% -- this more central, longer-lived system needs more than
+Tfo=160 can buy back, leaving a severe ~58% yield deficit (vs. -7.4% at
+30-40%) even though the shape ratios stayed reasonable. So the Tfo=160 fix
+is centrality-specific, not general, consistent with the original
+Tfo=136->150 study's own finding that 10-20%/0-10% are weak-to-non
+responders to this lever. The 32-step-at-Tfo160 result stands only for
+30-40% centrality until a real fix for the rollout-length limitation itself
+(more GPU memory, activation checkpointing, or multi-window chaining) is
+found. None of this appears to meaningfully distort physics conclusions
+drawn from this pipeline (both FNO and MUSIC produce smooth, physically
+reasonable spectra; the narrow-window peak is resolved or better in every
+widened-eta variant tried at every centrality tested, and the wide-window
+residual, while not fully eliminated, keeps shrinking with each change where
+it responds at all), but a full mechanistic explanation for what remains of the
 wide-window residual stays open.
