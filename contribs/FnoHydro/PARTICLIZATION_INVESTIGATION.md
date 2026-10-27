@@ -1128,6 +1128,26 @@ reduction (currently 16) is an untested additional lever if even the
 smaller targets don't fit in practice -- it would reduce both model capacity
 and memory, a different trade-off than anything explored so far.
 
+**Empirical confirmation (Lambda Cloud, 1x A100 40GB).** Training was moved
+to Lambda Cloud specifically to get past the 24GB ceiling (see
+`FNO4d/train_torch/config_lambda_32step_tau120.yaml` and
+`setup_and_train_lambda.sh`), running `neta=32, tauslice=120` (0-10%'s
+111-step worst case plus ~8% margin) on all four centrality files at once.
+Actual reported peak usage:
+
+| | estimated | actual |
+|---|---|---|
+| peak CUDA | 34.1 GB | **34.26 GB** |
+| peak CPU (RSS) | -- (not modeled) | 59.63 GB |
+
+The CUDA estimate held to within 0.5% extrapolating 1.7x past the largest
+previously-tested point (`neta*tauslice`: 1920 tested -> 3840 here) --
+good evidence the linear `peak_CUDA_GB ≈ 0.00797 * (neta * tauslice) + 3.47`
+model is reliable in this regime, not just within the narrow range it was
+fit to. 34.26 GB leaves ~5.7 GB headroom on the 40GB card (14%), tight but
+sufficient. Peak CPU RSS (59.63 GB) was never modeled here but is well
+within a typical A100 40GB instance's host RAM.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
