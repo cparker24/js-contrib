@@ -1148,6 +1148,64 @@ fit to. 34.26 GB leaves ~5.7 GB headroom on the 40GB card (14%), tight but
 sufficient. Peak CPU RSS (59.63 GB) was never modeled here but is well
 within a typical A100 40GB instance's host RAM.
 
+### Testing the long-rollout model at 0-10%, the original Tfo=150, no workaround
+
+With the `tauslice=120` model trained (best-eval-epoch checkpoint, epoch 10,
+eval L2=1.0734 -- the run overfit past ~epoch 10-12, so the final-epoch
+checkpoint is *not* the one used here; see the Lambda Cloud run's log),
+exported via `export_torchscript.py --channels 5 --nx 64 --ny 64 --neta 32
+--ntau 119` and traced to
+`contribs/FnoHydro/models/traced_fno_widened_eta_32step_tau120_best.pt`, the
+actual test this whole exercise was for: 0-10% centrality (the binding
+constraint that set `tauslice=120` in the first place) at the model's own
+native training cutoff, Tfo=150 MeV -- no per-centrality elevated-Tfo
+workaround, unlike every other centrality tested with a 32-step model so
+far. Config:
+`config/particlization_investigation/fno_3d_particlization_0_10_fno_eta2_32step_tau120_25ep.xml`,
+same seed (424242) as the existing
+`fno_3d_particlization_0_10_music_Tfo150.xml` MUSIC reference, so the two
+runs' sampled hadrons share the same initial state and are directly
+comparable.
+
+**Rollout genuinely reached freeze-out, no truncation**: the run log shows
+`bulkInfo nTau = 94` out of the 119-step window -- the hottest cell
+crossed below Tfo=150 with 25 steps of budget to spare, not at the boundary
+like every previous 32-step/`tauslice=60` test at this or a more central
+bin. This confirms the memory-estimate exercise's premise: `tauslice=120`
+really does cover 0-10%'s worst case (111 steps) with room left over, for
+this event at least.
+
+**Peak/edge** (`peak_edge_eta2_25ep.py`, same methodology used throughout):
+narrow-window (\|y\|<0.45) **5.5%** vs. MUSIC's own **4.6%** noise floor at
+this centrality -- essentially closed, consistent with every other
+widened-eta result. Wide-window (\|y\|<0.75) **11.3%** vs. MUSIC's **4.5%**
+-- not closed, in the same range as the pre-tau-fix 32-step results at
+other centralities (9.8%-15.5%), though this is the first time a 32-step
+model has been tested at 0-10% at all.
+
+**Yield: a new, different-shaped deficit.** Total hadron yield is down
+**-50.6%** (45,174 vs. MUSIC's 91,502, both at 20x oversampling) -- by far
+the largest yield deficit seen anywhere in this investigation, *despite*
+the rollout completing without truncation. But mid-rapidity yield
+(\|y\|<0.8, from `compare_particle_spectra.py`) is down only **-12.6%**
+(20,007 vs. 22,884 hadrons; dN/dy 666.9 vs. 762.8) -- much closer to the
+per-centrality-Tfo-fixed results elsewhere (-7% to -8%). That gap between
+the mid-rapidity deficit and the total deficit means the shortfall is
+concentrated away from mid-rapidity, at the more forward/backward
+rapidities -- a different mechanism than the previous yield deficits in
+this document, which were uniform rollout-truncation effects (the whole
+tensor cut off before freeze-out, not a rapidity-dependent effect) and
+didn't apply here since this rollout didn't truncate. A plausible
+contributor, not yet confirmed: the widened-eta grid's `etaslice=[null,-1]`
+keeps bins `[-2.0, +1.875]` (dropping only the raw grid's last bin, at
++2.0) -- a slightly asymmetric window that clips coverage worse on the
+forward (+eta) side, which would matter most for 0-10%'s wider rapidity
+support (the most extended fireball of any centrality tested) and barely
+at all for narrower bins like 30-40% where this asymmetry went unnoticed.
+Not yet isolated with a dedicated test.
+
+Plots: `docs/particlization_investigation/{pt,y}_spectrum_0_10_eta2_32step_tau120_25ep.png`.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -1294,4 +1352,17 @@ narrow-window peak is resolved or better in every widened-eta variant tried
 at every centrality tested, and the wide-window residual, while not fully
 eliminated, keeps shrinking with each change where Tfo is tuned
 appropriately for that centrality), but a full mechanistic explanation for
-what remains of the wide-window residual stays open.
+what remains of the wide-window residual stays open. **The "real long-term
+fix" above got tried**: a `tauslice=120` model (long enough to cover
+0-10%'s own 111-step worst case) was trained on Lambda Cloud (see "Memory
+estimate" / "Empirical confirmation" above) and tested at 0-10% at the
+model's own native Tfo=150, no per-centrality workaround needed for the
+first time. Partial success: the rollout genuinely reaches freeze-out
+(`nTau=94` of 119, well inside budget) and the narrow-window peak stays
+closed (5.5% vs. MUSIC's 4.6% floor), but a large, *new-shaped* yield
+deficit shows up (-50.6% total, but only -12.6% at mid-rapidity, meaning
+it's concentrated at forward/backward rapidity, not a truncation artifact
+like every previous yield deficit in this document). Suspected but
+unconfirmed cause: the widened-eta slice's asymmetric kept window
+(`[-2.0, +1.875]`, not `[-2.0, +2.0]`) clipping 0-10%'s unusually wide
+rapidity support on the forward side. Not yet isolated or fixed.
