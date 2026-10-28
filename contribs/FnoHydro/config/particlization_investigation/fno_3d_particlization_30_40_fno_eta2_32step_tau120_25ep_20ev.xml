@@ -1,0 +1,232 @@
+<?xml version="1.0" ?>
+<jetscape>
+
+  <!--
+    20-event ensemble variant of the long-rollout (tauslice=120) model
+    test, native Tfo=150, 30-40% centrality -- see
+    PARTICLIZATION_INVESTIGATION.md's "20-event ensemble sweep" section.
+    Same model/seed/physics as the single-event 0-10% config this was
+    templated from (fno_3d_particlization_0_10_fno_eta2_32step_tau120_25ep.xml);
+    only <nEvents>, <outputFilename>, and centrality (<cenMin>/<cenMax>,
+    <centrality-low>/<centrality-high>) changed.
+
+--
+    Particlization (Cooper-Frye via iSS) comparison run, FNO arm, 0-10%
+    centrality -- the long-rollout model (see "Memory estimate: what would
+    it take to train central events to genuine freeze-out at 32 eta steps?"
+    and its "Empirical confirmation (Lambda Cloud, 1x A100 40GB)" follow-up
+    in PARTICLIZATION_INVESTIGATION.md). Trained via
+    FNO4d/train_torch/config_lambda_32step_tau120.yaml on Lambda Cloud:
+    same widened-eta power-of-2+1 grid as the other 32-step models
+    (neta=32, eta_min=-2.0, deta=0.125, n_features=5), but tauslice=120
+    instead of 60 -- long enough to cover 0-10%'s own worst-case
+    `ntau_freezeout` (111, the longest-lived bin of all four centralities)
+    at the model's native training cutoff, Tfo=150 MeV. This is the first
+    model in this investigation where 0-10% does NOT need a per-centrality
+    elevated Tfo workaround (unlike the tauslice=60 32-step model, which
+    needed Tfo=190 at 10-20% and would have needed something similar or
+    higher here) -- <FNO><freezeout_temperature> below is the model's own
+    native 0.150, matching MUSIC's, with no override.
+
+    <FNO><model_file> points at traced_fno_widened_eta_32step_tau120_best.pt
+    -- the best-eval-epoch checkpoint (epoch 10, eval L2=1.0734; the run's
+    final epoch, 24, had already regressed to 1.1090 from overfitting past
+    ~epoch 10-12 -- see PARTICLIZATION_INVESTIGATION.md), not the final-epoch
+    checkpoint used loosely elsewhere in this directory's config names.
+    <ntau>119</ntau> = tauslice upper bound (120) - 1, per
+    export_torchscript.py's convention.
+
+    Same seed/IS/oversampling as every other 0-10% config in this
+    directory, so hadrons are directly comparable.
+
+    Sibling: fno_3d_particlization_0_10_music_Tfo150.xml (same seed, same
+    centrality, same freezeout_temperature, already run -- its output is
+    the MUSIC reference for this comparison; MUSIC's physics doesn't depend
+    on which FNO model is used, so no new MUSIC run is needed).
+  -->
+
+  <enableAutomaticTaskListDetermination
+    > false </enableAutomaticTaskListDetermination>
+
+  <nEvents> 20 </nEvents>
+
+  <Random>
+    <seed>424242</seed>
+  </Random>
+
+  <vlevel> 0 </vlevel>
+
+  <setReuseHydro> false </setReuseHydro>
+  <nReuseHydro> 0 </nReuseHydro>
+
+  <outputFilename>particlization_30_40_fno_eta2_32step_tau120_25ep_20ev.dat</outputFilename>
+  <JetScapeWriterAscii> on </JetScapeWriterAscii>
+
+  <write_pthat> 1 </write_pthat>
+
+  <!-- Hard Process (required by fnoHydroTest.cc's hardcoded PGun) -->
+  <Hard>
+    <PGun>
+        <name>PGun</name>
+        <pT>20</pT>
+        <parID>21</parID>
+    </PGun>
+  </Hard>
+
+  <!-- Inital State Module: MCGlauber, matching xmls/AuAu_50ev_0_10.xml (the
+       config that generated FNO4d's training data) -- not TrentoInitial. -->
+  <IS>
+      <grid_max_x> 10 </grid_max_x>
+      <grid_max_y> 10 </grid_max_y>
+      <grid_max_z> 6 </grid_max_z>
+      <grid_step_x> 0.3 </grid_step_x>
+      <grid_step_y> 0.3 </grid_step_y>
+      <grid_step_z> 0.2 </grid_step_z>
+
+      <MCGlauber>
+        <generateOnlyPositions>0</generateOnlyPositions>
+        <projectile>Au</projectile>
+        <target>Au</target>
+        <sqrts>200</sqrts>
+        <b_min>0.0</b_min>
+        <b_max>20.0</b_max>
+        <cenMin>30.0</cenMin>
+        <cenMax>40.0</cenMax>
+        <nucleon_configuration_from_file>0</nucleon_configuration_from_file>
+        <useQuarks>1</useQuarks>
+        <Q2>1.0</Q2>
+        <shadowing_factor>0.0</shadowing_factor>
+        <baryon_junctions>0</baryon_junctions>
+        <N_sea_partons>1</N_sea_partons>
+        <d_min>0.9</d_min>
+        <lambdaB>0.2</lambdaB>
+        <BG>3.960</BG>
+        <Subtract_hard_momentum>0</Subtract_hard_momentum>
+        <lambdaBs>0.0</lambdaBs>
+        <baryonInStringProb>0.0</baryonInStringProb>
+        <fluct_Nstrings_per_NN_collision>1</fluct_Nstrings_per_NN_collision>
+        <QCD_string_production_mode>1</QCD_string_production_mode>
+        <rapidity_loss_method>4</rapidity_loss_method>
+        <ylossParam4At2>1.610</ylossParam4At2>
+        <ylossParam4At4>1.685</ylossParam4At4>
+        <ylossParam4At6>1.685</ylossParam4At6>
+        <ylossParam4At10>2.95</ylossParam4At10>
+        <ylossParam4var>0.682</ylossParam4var>
+        <remnant_energy_loss_fraction>0.536</remnant_energy_loss_fraction>
+        <fluctuation_remnant_energy_loss_fraction>0</fluctuation_remnant_energy_loss_fraction>
+        <remnant_energy_loss_fraction_var>0.4</remnant_energy_loss_fraction_var>
+        <evolve_QCD_string_mode>4</evolve_QCD_string_mode>
+        <tau_form_mean>0.424</tau_form_mean>
+        <tau_form_fluct_gamma_beta>1.0</tau_form_fluct_gamma_beta>
+      </MCGlauber>
+  </IS>
+
+  <!--Preequilibrium Dynamics Module: MusicPrimedPreEq (see driver .cc),
+       driven by <taus> below as its priming target tau. -->
+  <Preequilibrium>
+      <tau0>0.44</tau0>
+      <taus>0.44</taus>
+      <NullPreDynamics> </NullPreDynamics>
+  </Preequilibrium>
+
+  <!-- Hydro Module: live 3D+1 FnoHydro using the retrained FNO4d model.
+       <MUSIC> here is read by MusicPrimedPreEq's EMBEDDED MpiMusic
+       instance (the "priming" stage, InitialProfile=131) -- not by the
+       actual Hydro task for this run, which is FnoHydro (<FNO> below). -->
+  <Hydro>
+      <MUSIC>
+          <name>MUSIC</name>
+          <MUSIC_input_file>music_input</MUSIC_input_file>
+          <EOS>91</EOS>
+          <InitialProfile>131</InitialProfile>
+          <beastMode>1</beastMode>
+          <Initial_time_tau_0>0.424</Initial_time_tau_0>
+          <output_evolution_to_file>0</output_evolution_to_file>
+          <output_evolution_to_memory>1</output_evolution_to_memory>
+          <output_evolution_every_N_timesteps>1</output_evolution_every_N_timesteps>
+          <surface_in_memory>1</surface_in_memory>
+
+          <shear_viscosity_eta_over_s>0.108</shear_viscosity_eta_over_s>
+          <T_dependent_Shear_to_S_ratio>3</T_dependent_Shear_to_S_ratio>
+          <shear_viscosity_3_T_kink_in_GeV>0.206</shear_viscosity_3_T_kink_in_GeV>
+          <shear_viscosity_3_at_kink>0.108</shear_viscosity_3_at_kink>
+          <shear_viscosity_3_low_T_slope_in_GeV>-1.999</shear_viscosity_3_low_T_slope_in_GeV>
+          <shear_viscosity_3_high_T_slope_in_GeV>1.999</shear_viscosity_3_high_T_slope_in_GeV>
+          <muB_dependent_Shear_to_S_ratio>0</muB_dependent_Shear_to_S_ratio>
+
+          <temperature_dependent_bulk_viscosity>3</temperature_dependent_bulk_viscosity>
+          <bulk_viscosity_3_max>0.092</bulk_viscosity_3_max>
+          <bulk_viscosity_3_T_peak_in_GeV>0.180</bulk_viscosity_3_T_peak_in_GeV>
+          <bulk_viscosity_3_width_in_GeV>0.067</bulk_viscosity_3_width_in_GeV>
+          <bulk_viscosity_3_lambda_asymm>-0.8</bulk_viscosity_3_lambda_asymm>
+
+          <Include_second_order_terms>1</Include_second_order_terms>
+          <Include_Rhob>0</Include_Rhob>
+          <Include_QS>0</Include_QS>
+          <use_eps_for_freeze_out>0</use_eps_for_freeze_out>
+          <Do_FreezeOut_lowtemp>1</Do_FreezeOut_lowtemp>
+          <average_surface_over_this_many_time_steps>5</average_surface_over_this_many_time_steps>
+          <Perform_CooperFrye_Freezeout>0</Perform_CooperFrye_Freezeout>
+          <string_source_sigma_x>0.207</string_source_sigma_x>
+          <string_source_sigma_eta>0.458</string_source_sigma_eta>
+          <stringPreEqFlowFactor>0.0</stringPreEqFlowFactor>
+
+          <freezeout_temperature>0.150</freezeout_temperature>
+      </MUSIC>
+
+      <FNO>
+        <model_file
+            >../external_packages/js-contrib/contribs/FnoHydro/models/traced_fno_widened_eta_32step_tau120_best.pt</model_file>
+
+        <centrality-low>30</centrality-low>
+        <centrality-high>40</centrality-high>
+        <EOS_id_MUSIC>91</EOS_id_MUSIC>
+
+        <n_features>5</n_features>
+        <energy_density_normalization>etau75_3d</energy_density_normalization>
+        <max_rollout_windows>1</max_rollout_windows>
+        <freezeout_temperature>0.150</freezeout_temperature>
+
+        <nx>64</nx>
+        <ny>64</ny>
+        <neta>32</neta>
+        <ntau>119</ntau>
+
+        <x_min>-10.0</x_min>
+        <y_min>-10.0</y_min>
+        <eta_min>-2.0</eta_min>
+
+        <dtau>0.1</dtau>
+        <deta>0.125</deta>
+      </FNO>
+  </Hydro>
+
+  <!-- Surface sampler: raises oversampling above jetscape_main.xml's
+       default of 1 so a single hydro event's freeze-out surface yields
+       enough sampled hadrons for a pT spectrum comparison. Must match the
+       MUSIC sibling config exactly. -->
+  <SoftParticlization>
+    <iSS>
+      <number_of_repeated_sampling>20</number_of_repeated_sampling>
+    </iSS>
+  </SoftParticlization>
+
+  <!--Eloss Modules -->
+    <Eloss>
+        <maxT>100</maxT>
+      <Matter>
+        <Q0> 2.0 </Q0>
+        <in_vac> 0 </in_vac>
+        <vir_factor> 0.25 </vir_factor>
+        <recoil_on> 1 </recoil_on>
+        <broadening_on> 0 </broadening_on>
+        <hydro_Tc> 0.16 </hydro_Tc>
+      </Matter>
+    </Eloss>
+
+    <!-- Jet Hadronization Module -->
+    <JetHadronization>
+      <name>colorless</name>
+    </JetHadronization>
+
+</jetscape>

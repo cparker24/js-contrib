@@ -1206,6 +1206,74 @@ Not yet isolated with a dedicated test.
 
 Plots: `docs/particlization_investigation/{pt,y}_spectrum_0_10_eta2_32step_tau120_25ep.png`.
 
+### 20-event ensemble sweep across all four centralities
+
+Scaled the single-event 0-10% test above to a proper ensemble, and to all
+four centralities: 20 FNO events vs. 20 matching MUSIC events (same seed,
+20x iSS oversampling each -- 400 total draws per arm per centrality),
+using the `tauslice=120` model at its native Tfo=150 everywhere, no
+per-centrality workaround. New configs:
+`config/particlization_investigation/fno_3d_particlization_{0_10,10_20,20_30,30_40}_{fno_eta2_32step_tau120_25ep,music_Tfo150}_20ev.xml`.
+
+**Infrastructure notes** (for anyone rerunning this): launching all 8 runs
+(4 FNO + 4 MUSIC) at once inside the `cameronJetscape` container OOM-killed
+two of the FNO arms partway through (exit 137) -- each FNO event's surface
+search momentarily pushes system memory to ~30+ GB, and 4 of those plus 4
+MUSIC runs concurrently exceeded the container's 125 GB. Re-running the
+killed arms with less concurrency fixed it; stick to 2-3 concurrent heavy
+runs, not all 8 at once, next time. Separately, the 30-40% FNO run hung
+for ~18 hours stuck in MUSIC's priming initialization (0 bytes written the
+entire time, CPU-bound the whole way -- a genuine hang, not legitimate
+slowness, since nothing about the 30-40% physics is new here) -- killing
+and relaunching it alone resolved it immediately. Cause not isolated;
+flagged here in case it recurs.
+
+**Peak/edge** (`peak_edge_eta2_25ep.py`, 400 draws per arm -- much lower
+statistical noise than any previous check in this document, so MUSIC's own
+floor here, 1.5-2.1%, is tighter than the 3.5-5.3% floors quoted earlier
+from 5-15-event ensembles):
+
+| centrality | FNO narrow | MUSIC narrow (floor) | FNO wide | MUSIC wide (floor) |
+|---|---|---|---|---|
+| 0-10% | 5.2% | 1.9% | 14.0% | 4.8% |
+| 10-20% | 3.9% | 1.8% | 11.0% | 3.7% |
+| 20-30% | 5.7% | 2.1% | 11.8% | 4.1% |
+| 30-40% | 4.4% | 1.5% | 11.0% | 4.3% |
+
+Narrow-window gap (FNO minus MUSIC floor) is small and roughly flat across
+centralities (2-4 points); wide-window gap is larger but also roughly flat
+(7-9 points), with 0-10% the mild outlier on both counts -- consistent
+with the single-event 0-10% result above, now confirmed at ensemble level
+instead of n=1.
+
+**Yield** (`compare_particle_spectra.py`, same 400 draws): the
+forward/backward-concentrated deficit pattern found in the single-event
+0-10% test holds at ensemble level, and now shows a clear trend with
+centrality:
+
+| centrality | total yield deficit | mid-rapidity (\|y\|<0.8) deficit |
+|---|---|---|
+| 0-10% | -60.5% | -28.9% |
+| 10-20% | -58.8% | -26.2% |
+| 20-30% | -57.0% | -24.5% |
+| 30-40% | -53.1% | -17.9% |
+
+Both the total and mid-rapidity deficits grow monotonically with
+centrality, and the mid-rapidity deficit is consistently roughly half the
+total deficit at every centrality -- i.e. the shortfall really is
+concentrated away from mid-rapidity everywhere, not just at 0-10%, and
+gets worse for more central (larger, longer-lived, wider-rapidity-support)
+collisions. This is a substantially larger and more systematic yield
+problem than anything else in this document (the previous worst case,
+pre-Tfo-fix, was -37% at a single centrality); it did not show up in the
+single-event 32-step/`tauslice=60` tests because those needed per-centrality
+elevated Tfo to reach freeze-out at all, which this model doesn't -- the
+long rollout trades the old truncation-driven deficit for this new,
+rapidity-shaped one.
+
+Plots (all at 20-event ensemble level):
+`docs/particlization_investigation/{pt,y}_spectrum_{0_10,10_20,20_30,30_40}_eta2_32step_tau120_25ep_20ev.png`.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -1366,3 +1434,15 @@ like every previous yield deficit in this document). Suspected but
 unconfirmed cause: the widened-eta slice's asymmetric kept window
 (`[-2.0, +1.875]`, not `[-2.0, +2.0]`) clipping 0-10%'s unusually wide
 rapidity support on the forward side. Not yet isolated or fixed.
+**Confirmed and sharpened at 20-event ensemble level, across all four
+centralities** (see "20-event ensemble sweep" above): the narrow-window
+peak stays small (2-4 points above MUSIC's own floor) and roughly flat
+with centrality; the yield deficit, however, is worse than the
+single-event 0-10% check suggested (-60.5% total there vs. -50.6% at n=1)
+and grows monotonically from -53.1% at 30-40% to -60.5% at 0-10%, with the
+mid-rapidity deficit consistently about half the total at every
+centrality. So the long-rollout model trades the old
+truncation-driven, per-centrality-fixable yield deficit for a new,
+larger, rapidity-shaped one that gets worse the more central the
+collision -- not yet understood or fixed, and currently a bigger open
+problem than anything the Tfo workarounds solved.
