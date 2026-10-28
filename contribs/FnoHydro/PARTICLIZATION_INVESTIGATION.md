@@ -1274,6 +1274,81 @@ rapidity-shaped one.
 Plots (all at 20-event ensemble level):
 `docs/particlization_investigation/ensemble_20ev/{pt,y}_spectrum_{0_10,10_20,20_30,30_40}_eta2_32step_tau120_25ep_20ev.png`.
 
+### Root cause of the yield deficit: the model learned a dataset-average "shutoff tau," not eta resolution
+
+The forward/backward-concentrated, centrality-dependent yield deficit above
+was suspected to trace to the widened-eta grid's asymmetric kept window
+(`[-2.0, +1.875]`). **That hypothesis is wrong** -- isolated and replaced by
+a much better-supported, more mechanistic one, found by bypassing the whole
+JetScape/iSS pipeline entirely and comparing the trained `tauslice=120`
+model's raw predictions directly against the true MUSIC ground truth it was
+trained on (same checkpoint, same normalizer, 5 real 0-10% training events,
+loaded straight from `AuAu_50ev_0_10_eta2_n33.root`; script kept at
+`FNO4d/train_torch` for reuse).
+
+**What `read_3d_root.py` actually does**: every event's tau axis is padded
+with *exact* zeros out to the shared `choose_ntau` (120 here), since
+different events freeze out at different real times (0-10%'s own spread:
+90-111 steps, mean 98.4). `train_torch.py`'s loss (`LpLoss`/`H1Loss`,
+relative L2/H1 over the full `(x,y,eta,tau)` volume) is computed over this
+*entire* padded tensor, unmasked -- there is no mechanism excluding the
+physically-meaningless zero-padded tail from the loss.
+
+**What that does to the model**: it has no way to know, from its input
+alone, when *this specific* event will actually freeze out, but the
+training signal still rewards predicting ~zero energy density around
+wherever *most* training events' padding starts. The direct comparison
+confirms this exactly -- predicted energy density tracks the true value
+reasonably well during the active phase (a separate, milder, ordinary
+regression-accuracy drift: ~94% of truth near tau=0, decaying smoothly to
+~77-85% of truth by tau~9-10 fm, uniform across eta at any fixed tau, which
+also rules out the eta-asymmetry hypothesis directly -- no eta-dependence
+in the error was found at all), but then **collapses to near-zero in a
+tight cluster around tau~9.5-10.5 fm for every event tested, regardless of
+that event's own true freeze-out time**:
+
+| event | true `ntau_freezeout` | true tau [fm] | pred/true energy density ratio AT that tau |
+|---|---|---|---|
+| 1 | 90 (shortest) | 9.34 | 0.274 |
+| 2 | 97 | 10.04 | 0.490 |
+| 0 | 98 | 10.14 | 0.093 |
+| 3 | 102 | 10.54 | **0.007** |
+| 4 | 103 (longest) | 10.64 | **0.001** |
+
+The longer an event's *true* lifetime, the worse the collapse at its own
+freeze-out point -- exactly the pattern needed to explain why the yield
+deficit is worst for 0-10% (the centrality with both the highest mean and
+widest spread of freeze-out times) and grows monotonically with centrality
+in the 20-event sweep above. The collapsed energy density feeds straight
+into `FnoHydro.cc`'s surface-finder, which finds a stunted surface and
+`iSS` then samples far fewer hadrons from it -- directly producing the
+severe total-yield deficits documented throughout this section, with no
+need to invoke eta resolution or grid asymmetry at all.
+
+![FNO model (dashed) vs. true MUSIC (solid) integrated energy density for 5 real 0-10% events -- all five predicted curves collapse in a tight cluster around tau~9.5-10.5 fm regardless of each event's own true freeze-out tau (dotted vertical lines, staggered from 9.3 to 10.6 fm)](docs/particlization_investigation/model_vs_truth_diagnostic/eta_integrated_ed_falloff_0_10.png)
+
+**Fix applied** (`FNO4d` commit `dff91ba`, not yet retrained against):
+`loc_libs/masked_loss.py`'s `TailMaskedLoss` wraps `LpLoss`/`H1Loss` to zero
+out *both* prediction and target at every `(event, tau)` slice that is pure
+padding, before computing the loss -- padding is exact zero across all 5
+channels and every spatial point, while real physics (even dilute,
+near-freeze-out) has nonzero temperature/velocity content, so a tiny
+epsilon (`1e-8`, in normalized-space units) cleanly separates the two.
+Zeroing both sides (not just excluding padded entries from a sum) makes
+`diff = pred_masked - true_masked = 0` there regardless of the model's raw
+output, so no gradient flows from the padded region at all -- the model is
+no longer taught anything about *when* to stop, only pushed to match real
+physics wherever it exists. Verified against real data: the mask's valid-
+step count tracks each event's own `ntau_freezeout` to within 1 step.
+Applied to both `train_loss` and `eval_losses`, so model selection (best
+checkpoint by eval L2) also stops being influenced by how well a model
+matches the artificial padding -- eval L2 numbers from a retrain with this
+fix are not directly comparable to every prior run's unmasked eval L2 in
+this document. **Not yet retrained or tested live** -- the natural next
+step is a fresh Lambda Cloud run of `config_lambda_32step_tau120.yaml`
+(unchanged otherwise) and a repeat of the 20-event ensemble sweep above to
+see whether the yield deficit actually closes.
+
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
 - `WritePeakTemperatureDiagnostics` — hottest-cell (ed, T) vs tau, every
@@ -1446,3 +1521,18 @@ truncation-driven, per-centrality-fixable yield deficit for a new,
 larger, rapidity-shaped one that gets worse the more central the
 collision -- not yet understood or fixed, and currently a bigger open
 problem than anything the Tfo workarounds solved.
+**Root cause found, and it is not eta resolution.** A direct comparison of
+the trained model's raw predictions against true MUSIC ground truth (bypassing
+JetScape/iSS entirely) showed predicted energy density collapsing to
+near-zero in a tight cluster around tau~9.5-10.5 fm for every event tested,
+regardless of that event's own true freeze-out time -- worse the longer the
+event actually lives. Cause: `read_3d_root.py` zero-pads each event's tau
+axis to a shared length (events freeze out at different real times), and
+the training loss is computed over that padding unmasked, teaching the
+model a single dataset-average "shutoff tau" instead of each event's own
+physics. The error was confirmed uniform across eta at fixed tau, directly
+ruling out the eta-grid-asymmetry hypothesis above. Fix implemented
+(`TailMaskedLoss`, `FNO4d` commit `dff91ba`): mask the loss so no gradient
+flows from the padded region at all. Not yet retrained or tested live --
+see "Root cause of the yield deficit" above for the full writeup and the
+next step.
