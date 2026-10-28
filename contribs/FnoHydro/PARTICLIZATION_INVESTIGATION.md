@@ -1272,7 +1272,7 @@ long rollout trades the old truncation-driven deficit for this new,
 rapidity-shaped one.
 
 Plots (all at 20-event ensemble level):
-`docs/particlization_investigation/{pt,y}_spectrum_{0_10,10_20,20_30,30_40}_eta2_32step_tau120_25ep_20ev.png`.
+`docs/particlization_investigation/ensemble_20ev/{pt,y}_spectrum_{0_10,10_20,20_30,30_40}_eta2_32step_tau120_25ep_20ev.png`.
 
 ## Diagnostics added (kept permanently in `FnoHydro.cc`/`.h`)
 
